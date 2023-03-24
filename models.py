@@ -52,6 +52,22 @@ class Backbone(nn.Module):
 		return f, fs, fw
 
 class ProposalGeneration(nn.Module):
+	
+	# How to deal with the case where L does not divide T?
+	# Should Wc be placed on gpu? If so, how?
+	def compute_content_matrix(T, L, C):
+		Wc = torch.zeros((L, L, C, T))
+		for i in range(L):
+			for j in range(i, L):
+				window_size = (j-i)+1
+				window_start, num_frames = i*(T//L), window_size*(T//L)
+				clip_size = 1
+				if num_frames > C:
+					clip_size = num_frames//C
+				for c in range(min(C, num_frames)):
+					clip_start = window_start + c*clip_size
+					X[i, j, c, clip_start : clip_start + clip_size] = 1
+		return Wc
 
 	def __init__(self, T = 64, L = 16, C = 4):
 		super(ProposalGeneration, self).__init__()
@@ -59,8 +75,13 @@ class ProposalGeneration(nn.Module):
 		self.T = T
 		self.L = L
 		self.C = C
+		self.Wc = compute_content_matrix(T, L, C)
 
 	def forward(self, f):
-		fc, fm, fb = f, f, f
-
+		# Wc: (L, L, C, T), f: (B, T, D) -> fc: (B, L, L, C, D)
+		fc = torch.einsum('lmit, btj -> blmij', self.Wc, f)
+		# fc: (B, L, L, C, D) -> fm: (B, L, L, D)
+		fm = torch.sum(fc, dim=2)
+		# Did not clearly understand how fb is computed.
+		fb = f
 		return fc, fm, fb
