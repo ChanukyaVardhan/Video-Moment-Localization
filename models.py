@@ -90,3 +90,47 @@ class ProposalGeneration(nn.Module):
 		# fb: (B, D, L) -> fb: (B, L, D)
 		fb = torch.permute(f, (0, 2, 1))
 		return fc, fm, fb
+
+class Attention(nn.Module):
+    def __init__(self, D):
+        super(Attention, self).__init__()
+        self.D, self.attn_weights = D, None
+        self.W_q = nn.Linear(D, D)
+        self.W_k = nn.Linear(D, D)
+    
+    def forward(self, query, key, value):
+        # query: (B, Lq, D) -> (B, Lq, D), key: (B, Lk, D) -> (B, Lk, D)  
+        query, key = self.W_q(query), self.W_k(key)
+        # attn_weights: (B, Lq, Lk)
+        attn_weights = torch.matmul(query, torch.transpose(key, 2, 1))/math.sqrt(self.D)
+        # attn_weights: (B, Lq, Lk)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        # attn_weights: (B, Lq, Lk), value: (B, Lk=Lv, D) -> attn_out: (B, Lq, D)
+        attn_out = torch.matmul(attn_weights, value)
+        self.attn_weights = attn_weights
+        return attn_out
+
+class BoundaryUnit(nn.Module):
+    def __init__(self, D):
+        super(BoundaryUnit, self).__init__()
+        self.D = D
+        self.attn_layer = Attention(D)
+    
+    def forward(self, f_b, f_w, f_s, f_m):
+        # f_b: (B, L, D), f_w: (B, Nq, D) -> f_baq: (B, L, D)
+        f_baq = self.attn_layer(f_b, f_w, f_w)
+        # f_b: (B, L, D), f_s: (B, D), f_baq: (B, L, D) -> f_bq: (B, L, D)
+        f_bq = f_b*(f_baq + torch.unsqueeze(f_s, 1))
+        # f_bq: (B, L, D) -> A_b: (B, L, L) 
+        # is matmul same as bmm?
+        A_b = torch.bmm(f_bq, torch.permute(f_bq, (0, 2, 1)))/math.sqrt(D)
+        # A_b: (B, L, L) -> A_b: (B, L, L) 
+        A_b = nn.functional.softmax(A_b, dim=-1)
+        # A_b: (B, L, L), f_b: (B, L, D) -> f_bb: (B, L, D)
+        f_bb = torch.matmul(A_b, f_b)
+        # f_m: (B, L, L, D), f_s: (B, D) -> g_m: (B, L, L, D)
+        g_m = nn.functional.sigmoid(f_m * torch.unsqueeze(torch.unsqueeze(f_s, 1), 2))
+        # A_b: (B, L, L), f_m: (B, L, L, D) -> f_bm: (B, L, D) 
+        # I am not confident about the below line.
+        f_bm = torch.sum(torch.unsqueeze(A_b, 3) * (g_m*f_m), dim=1)
+        return f_bb + f_b + f_bm
