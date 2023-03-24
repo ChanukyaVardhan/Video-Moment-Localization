@@ -76,12 +76,17 @@ class ProposalGeneration(nn.Module):
 		self.L = L
 		self.C = C
 		self.Wc = compute_content_matrix(T, L, C)
+		self.avg_pool = nn.AvgPool1d(T//L, stride=T//L)
 
 	def forward(self, f):
 		# Wc: (L, L, C, T), f: (B, T, D) -> fc: (B, L, L, C, D)
 		fc = torch.einsum('lmit, btj -> blmij', self.Wc, f)
 		# fc: (B, L, L, C, D) -> fm: (B, L, L, D)
 		fm = torch.sum(fc, dim=2)
-		# Did not clearly understand how fb is computed.
-		fb = f
+		# f: (B, T, D) -> fb: (B, D, T)
+		fb = torch.permute(f, (0, 2, 1))
+		# fb: (B, D, T) -> fb: (B, D, L)
+		fb = self.avg_pool(fb)
+		# fb: (B, D, L) -> fb: (B, L, D)
+		fb = torch.permute(f, (0, 2, 1))
 		return fc, fm, fb
