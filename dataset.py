@@ -7,16 +7,19 @@ import string
 import torch
 import torchtext
 import torch.nn as nn
+import torch.nn.functional as F
 
 class CharadesSTA(Dataset):
 
+	# CHECK - IS HAVING A UNK AND PAD THE CORRECT WAY? FIX THIS PROPERLY
 	vocab 					= torchtext.vocab.pretrained_aliases["glove.6B.300d"]()
-	vocab.itos.extend(['<unk>'])
+	vocab.itos.extend(['<unk>', '<pad>'])
 	vocab.stoi['<unk>'] 	= vocab.vectors.shape[0]
-	vocab.vectors 			= torch.cat([vocab.vectors, torch.zeros(1, vocab.dim)], dim = 0)
+	vocab.stoi['<pad>'] 	= vocab.vectors.shape[0] + 1
+	vocab.vectors 			= torch.cat([vocab.vectors, torch.zeros(1, vocab.dim), torch.zeros(1, vocab.dim)], dim = 0)
 	word_embedding 			= nn.Embedding.from_pretrained(vocab.vectors)
 
-	def __init__(self, data_dir = 'data/charades', T = 64, split = 'train'):
+	def __init__(self, data_dir = 'data/charades', T = 64, max_query_length = 13, split = 'train'):
 		self.data_dir 		= data_dir
 		self.T 				= T
 		self.split 			= split
@@ -25,9 +28,9 @@ class CharadesSTA(Dataset):
 		ann_path 			= self.data_dir + "/annotations/charades_sta_{}.txt".format(self.split)
 		aux_ann_path 		= self.data_dir + "/annotations/Charades_v1_{}.csv".format(self.split)
 
-		self.annotations 	= self._load_annotations(ann_path, aux_ann_path)
+		self.annotations 	= self._load_annotations(ann_path, aux_ann_path, max_query_length)
 
-	def _load_annotations(self, ann_path, aux_ann_path):
+	def _load_annotations(self, ann_path, aux_ann_path, max_query_length):
 		with open(ann_path, 'r') as f:
 			anns   			= f.read().strip().split('\n')
 
@@ -44,6 +47,7 @@ class CharadesSTA(Dataset):
 			epos 			= min(float(epos), duration) # Found 1805 samples with this issue
 			tokens 			= str(query).lower().translate(str.maketrans("", "", string.punctuation)).strip().split()
 			token_idx 		= torch.tensor([self.vocab.stoi.get(w if w in self.vocab.stoi else '<unk>') for w in tokens], dtype = torch.long)
+			token_idx 		= F.pad(token_idx, (0, max_query_length - token_idx.shape[0]), value = self.vocab.stoi.get('<pad>'))
 			query_features  = self.word_embedding(token_idx)
 
 			if spos < epos: # Found 4 samples with this issue
@@ -52,6 +56,7 @@ class CharadesSTA(Dataset):
 						'times': [spos, epos],
 						'duration': duration,
 						'query': query,
+						'token_idx': token_idx,
 						'query_features': query_features,
 					})
 
@@ -73,7 +78,7 @@ class CharadesSTA(Dataset):
 		video_mask 			= np.zeros((self.T, 1))
 		video_mask[:nfeats] = 1
 
-		instance 		= {
+		instance 			= {
 			'times': annotation['times'], 							# Ground truth start and end pos
 			'duration': duration, 									# Duration of the video
 
@@ -85,11 +90,10 @@ class CharadesSTA(Dataset):
 			'end_index': end_index, 								# End index in sampled features
 
 			'query_features': query_features, 						# Sentence query features
+			'query_masks': (annotation['token_idx'] < self.vocab.stoi['<pad>']).byte(),
 		}
 
-		# QUERY FEATURES ARE NOT FIXED TO A SENTENCE LENGTH?
-		# DO WE NEED A QUERY MASK FOR THE EXTENDED FEATURES?
-		# FIX THIS COLLATE_FN OR DO THE SAME LIKE VIDEO MASK?
+		# CHECK - DO WE NEED A QUERY MASK FOR THE EXTENDED FEATURES?
 
 		return instance
 
