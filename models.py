@@ -134,3 +134,47 @@ class BoundaryUnit(nn.Module):
         # I am not confident about the below line.
         f_bm = torch.sum(torch.unsqueeze(A_b, 3) * (g_m*f_m), dim=1)
         return f_bb + f_b + f_bm
+
+class ContentAttention(nn.Module):
+    def __init__(self, D):
+        super(ContentAttention, self).__init__()
+        self.D, self.attn_weights = D, None
+        self.W_q = nn.Linear(D, D)
+        self.W_k = nn.Linear(D, D)
+    
+    def forward(self, query, key, value):
+        # query: (B, L, L, C, D) -> (B, L, L, C, D), key: (B, Nq, D) -> (B, 1, 1, Nq, D)
+        query, key = self.W_q(query), self.W_k(key).unsqueeze(1).unsqueeze(2)
+        # query: (B, L, L, C, D), key: (B, 1, 1, Nq, D) -> attn_weights: (B, L, L, C, Nq)
+        attn_weights = torch.matmul(query, torch.transpose(key, 3, 4))/math.sqrt(self.D)
+        # attn_weights: (B, L, L, C, Nq)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        # value: (B, Nq, D) -> (B, 1, 1, Nq, D)
+        value = value.unsqueeze(1).unsqueeze(2)
+        # attn_weights: (B, L, L, C, Nq), value: (B, 1, 1, Nq, D) -> attn_out: (B, L, L, C, D)
+        attn_out = torch.matmul(attn_weights, value)
+        self.attn_weights = attn_weights
+        return attn_out
+
+class ContentUnit(nn.Module):
+    def __init__(self, D):
+        super(ContentUnit, self).__init__()
+        self.D = D
+        self.attn_layer = ContentAttention(D)
+    
+    def forward(self, f_c, f_w, f_s, f_m):
+        # f_c: (B, L, L, C, D), f_w: (B, Nq, D) -> f_caq: (B, L, L, C, D)
+        f_caq = self.attn_layer(f_c, f_w, f_w)
+        # f_c: (B, L, L, C, D), f_s: (B, D), f_caq: (B, L, L, C, D) -> f_cq: (B, L, L, C, D)
+        f_cq = f_c*(f_caq + f_s.unsqueeze(1).unsqueeze(2).unsqueeze(3))
+        # f_cq: (B, L, L, C, D) -> A_c: (B, L, L, C, C)
+        A_c = torch.matmul(f_cq, torch.transpose(f_cq, 3, 4))/math.sqrt(D)
+        # A_c: (B, L, L, C, C) -> A_c: (B, L, L, C, C) 
+        A_c = nn.functional.softmax(A_c, dim=-1)
+        # A_c: (B, L, L, C, C), f_c: (B, L, L, C, D) -> f_cc: (B, L, L, C, D)
+        f_cc = torch.matmul(A_c, f_c)
+        # f_m: (B, L, L, D), f_s: (B, D) -> g_m: (B, L, L, D)
+        g_m = nn.functional.sigmoid(f_m * f_s.unsqueeze(1).unsqueeze(2))
+        # g_m: (B, L, L, D), f_m: (B, L, L, D) -> fbar_m: (B, L, L, D)
+        fbar_m = g_m*f_m
+        return f_cc + f_c + fbar_m.unsqueeze(3)
