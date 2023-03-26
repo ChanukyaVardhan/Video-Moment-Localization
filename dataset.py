@@ -1,9 +1,10 @@
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 
 import csv
 import h5py
 import numpy as np
 import string
+import time
 import torch
 import torchtext
 import torch.nn as nn
@@ -12,98 +13,118 @@ import torch.nn.functional as F
 class CharadesSTA(Dataset):
 
 	# CHECK - IS HAVING A UNK AND PAD THE CORRECT WAY? FIX THIS PROPERLY
-	vocab 					= torchtext.vocab.pretrained_aliases["glove.6B.300d"]()
+	vocab 						= torchtext.vocab.pretrained_aliases["glove.6B.300d"]()
 	vocab.itos.extend(['<unk>', '<pad>'])
-	vocab.stoi['<unk>'] 	= vocab.vectors.shape[0]
-	vocab.stoi['<pad>'] 	= vocab.vectors.shape[0] + 1
-	vocab.vectors 			= torch.cat([vocab.vectors, torch.zeros(1, vocab.dim), torch.zeros(1, vocab.dim)], dim = 0)
-	word_embedding 			= nn.Embedding.from_pretrained(vocab.vectors)
+	vocab.stoi['<unk>'] 		= vocab.vectors.shape[0]
+	vocab.stoi['<pad>'] 		= vocab.vectors.shape[0] + 1
+	vocab.vectors 				= torch.cat([vocab.vectors, torch.zeros(1, vocab.dim), torch.zeros(1, vocab.dim)], dim = 0)
+	word_embedding 				= nn.Embedding.from_pretrained(vocab.vectors)
 
 	def __init__(self, data_dir = 'data/charades', T = 64, max_query_length = 13, split = 'train'):
-		self.data_dir 		= data_dir
-		self.T 				= T
-		self.split 			= split
+		self.data_dir 			= data_dir
+		self.T 					= T
+		self.max_query_length 	= max_query_length
+		self.split 				= split
 
-		self.feature_path 	= self.data_dir + "/features/i3d_finetuned/{}.npy"
-		ann_path 			= self.data_dir + "/annotations/charades_sta_{}.txt".format(self.split)
-		aux_ann_path 		= self.data_dir + "/annotations/Charades_v1_{}.csv".format(self.split)
+		self.feature_path 		= self.data_dir + "/features/i3d_finetuned/{}.npy"
+		ann_path 				= self.data_dir + "/annotations/charades_sta_{}.txt".format(self.split)
+		aux_ann_path 			= self.data_dir + "/annotations/Charades_v1_{}.csv".format(self.split)
 
-		self.annotations 	= self._load_annotations(ann_path, aux_ann_path, max_query_length)
+		self.annotations 		= self._load_annotations(ann_path, aux_ann_path, max_query_length)
 
 	def _load_annotations(self, ann_path, aux_ann_path, max_query_length):
 		with open(ann_path, 'r') as f:
-			anns   			= f.read().strip().split('\n')
+			anns   				= f.read().strip().split('\n')
 
 		with open(aux_ann_path) as f:
-			reader 			= csv.DictReader(f)
-			durations   	= {row['id']: float(row['length']) for row in reader}
+			reader 				= csv.DictReader(f)
+			durations   		= {row['id']: float(row['length']) for row in reader}
 
-		annotations		= []
+		annotations				= []
 		for ann in anns:
-			info, query 	= ann.split("##")
-			vid, spos, epos = info.split(" ")
-			duration 		= durations[vid]
-			spos 			= float(spos)
-			epos 			= min(float(epos), duration) # Found 1805 samples with this issue
-			tokens 			= str(query).lower().translate(str.maketrans("", "", string.punctuation)).strip().split()
-			token_idx 		= torch.tensor([self.vocab.stoi.get(w if w in self.vocab.stoi else '<unk>') for w in tokens], dtype = torch.long)
-			token_idx 		= F.pad(token_idx, (0, max_query_length - token_idx.shape[0]), value = self.vocab.stoi.get('<pad>'))
-			query_features  = self.word_embedding(token_idx)
+			info, query 		= ann.split("##")
+			vid, spos, epos 	= info.split(" ")
+			duration 			= durations[vid]
+			spos 				= float(spos)
+			epos 				= min(float(epos), duration) # Found 1805 samples with this issue
+			tokens 				= str(query).lower().translate(str.maketrans("", "", string.punctuation)).strip().split()
+			token_idx 			= torch.tensor([self.vocab.stoi.get(w if w in self.vocab.stoi else '<unk>') for w in tokens], dtype = torch.long)
+			token_idx 			= F.pad(token_idx, (0, max_query_length - token_idx.shape[0]), value = self.vocab.stoi.get('<pad>'))
+			query_features  	= self.word_embedding(token_idx)
 
 			if spos < epos: # Found 4 samples with this issue
 				annotations.append({
-						'video_id': vid,
-						'times': [spos, epos],
-						'duration': duration,
-						'query': query,
-						'token_idx': token_idx,
-						'query_features': query_features,
+						'video_id': 		vid,
+						'times': 			[spos, epos],
+						'duration': 		duration,
+						'query': 			query,
+						'token_idx': 		token_idx,
+						'query_features': 	query_features,
 					})
 
 		return annotations
 
 	def __getitem__(self, index):
-		annotation 			= self.annotations[index]
-		vid 				= annotation['video_id']
-		spos, epos 			= annotation['times']
-		duration 			= annotation['duration']
-		spos_n 				= spos / duration # Normalized start time
-		epos_n 				= epos / duration # Normalized end time
+		annotation 				= self.annotations[index]
+		vid 					= annotation['video_id']
+		spos, epos 				= annotation['times']
+		duration 				= annotation['duration']
+		spos_n 					= spos / duration # Normalized start time
+		epos_n 					= epos / duration # Normalized end time
 		
-		query_features 		= annotation['query_features']
-
+		query_features 			= annotation['query_features']
 		
-		video_features_all 	= np.load(self.feature_path.format(vid)).squeeze()
+		video_features_all 		= np.load(self.feature_path.format(vid)).squeeze()
 		video_features, nfeats, start_index, end_index = self.get_fixed_length_features(video_features_all, spos_n, epos_n)
-		video_mask 			= np.zeros((self.T, 1))
-		video_mask[:nfeats] = 1
+		video_mask 				= np.zeros((self.T, 1))
+		video_mask[:nfeats] 	= 1
 
-		instance 			= {
-			'times': annotation['times'], 							# Ground truth start and end pos
-			'duration': duration, 									# Duration of the video
+		instance 				= {
+			'times': 			annotation['times'], 														# Ground truth start and end pos
+			'duration': 		duration, 																	# Duration of the video
 
-			'video_features': torch.FloatTensor(video_features), 	# Uniformly sampled features of size T
-			'video_mask': torch.ByteTensor(video_mask), 			# Mask for video features, frames that are less than T will have 0
-			'start_pos': torch.FloatTensor([spos_n]), 				# Normalized start position
-			'end_pos': torch.FloatTensor([epos_n]), 				# Normalized end position
-			'start_index': start_index, 							# Start index in sampled features
-			'end_index': end_index, 								# End index in sampled features
+			'video_features': 	torch.FloatTensor(video_features).unsqueeze(0),								# Uniformly sampled features of size T
+			'video_mask': 		torch.ByteTensor(video_mask).unsqueeze(0), 									# Mask for video features, frames that are less than T will have 0
+			'start_pos': 		torch.FloatTensor([spos_n]), 												# Normalized start position
+			'end_pos': 			torch.FloatTensor([epos_n]), 												# Normalized end position
+			'start_index': 		start_index, 																# Start index in sampled features
+			'end_index': 		end_index, 																	# End index in sampled features
 
-			'query_features': query_features, 						# Sentence query features
-			'query_masks': (annotation['token_idx'] < self.vocab.stoi['<pad>']).byte(),
+			'query_features': 	query_features.unsqueeze(0), 												# Sentence query features
+			'query_mask': 		(annotation['token_idx'] < self.vocab.stoi['<pad>']).byte().unsqueeze(0),	# Sentence query mask
 		}
 
-		# CHECK - DO WE NEED A QUERY MASK FOR THE EXTENDED FEATURES?
-
 		return instance
+
+	def collate_fn(self, data):
+		tensor_items 	= ["video_features", "video_mask", "query_features", "query_mask", "start_pos", "end_pos"]
+		batch 			= {k: [d[k] for d in data] for k in data[0].keys()}
+
+		if len(data) == 1:
+			for k,v in batch.items():
+				if k in tensor_items:
+					batch[k] = torch.cat(batch[k], 0)
+				else:
+					batch[k] = batch[k][0]
+		else:
+			for k in tensor_items:
+				batch[k] = torch.cat(batch[k], 0)
+
+		return batch
 
 	def get_fixed_length_features(self, feat, start_pos, end_pos):
 		nfeats 		= feat.shape[0]
 		stride 		= 1.0 if nfeats <= self.T else nfeats * 1.0 / self.T
-		spos 		= 0 if self.split != "train" else np.random.randint(0, stride - 0.5 + 1)
+		if self.split != "train":
+			spos = 0
+		else:
+			random_end = -0.5 + stride
+			if random_end == np.floor(random_end):
+				random_end = random_end - 1.0
+			spos = np.random.randint(0, random_end + 1)
 
 		frame_idx 	= np.round(np.arange(spos, nfeats - 0.5, stride)).astype(int)
-		start_pos 	= float(nfeats - 1.0) * start_pos # CHECK - IS THIS CORRECT? SHOULDN'T THE 1.0 BE SUBTRACTED OUTSIDE THE PRODUCT?
+		start_pos 	= float(nfeats - 1.0) * start_pos
 		end_pos 	= float(nfeats - 1.0) * end_pos
 
 		if not (nfeats < self.T and len(frame_idx) == nfeats) and not (nfeats >= self.T and len(frame_idx) == self.T):
@@ -126,3 +147,15 @@ class CharadesSTA(Dataset):
 
 	def __len__(self):
 		return len(self.annotations)
+
+if __name__ == "__main__":
+	dataset	= CharadesSTA(split = 'train', T = 64, max_query_length = 13)
+	batch_s = 64
+	loader 	= DataLoader(dataset, batch_size = batch_s, shuffle = True, collate_fn = dataset.collate_fn, num_workers = 2)
+	st_time = time.time()
+	count 	= 0
+	for batch in loader:
+		assert (batch['video_features'].shape[1] == dataset.T) and (batch['query_features'].shape[1] == dataset.max_query_length)
+		count += batch['video_features'].shape[0];
+	print(f"# of training samples: {count}")
+	print(f"Total elapsed time ({(time.time() - st_time):.5f}sec)")
