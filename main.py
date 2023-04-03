@@ -5,17 +5,19 @@ from utils import loss_fn
 
 import argparse
 import json
+import os
 import torch
 import yaml
 
 def get_parameters():
-	parser = argparse.ArgumentParser()
+	parser 	= argparse.ArgumentParser()
 	parser.add_argument("--config_path", default = "config/charadessta.yml", help = "Path to config file.")
-	params = parser.parse_args()
+	args 	= parser.parse_args()
 
-	with open(params.config_path, "r") as f:
+	with open(args.config_path, "r") as f:
 		params = yaml.load(f, Loader=yaml.SafeLoader)
-	
+	params["experiment"] = os.path.splitext(os.path.basename(args.config_path))[0]
+
 	return params
 
 def get_datasets(params):
@@ -130,28 +132,65 @@ def eval_epoch(model, eval_dataloader, device, params):
 
 	return eval_loss
 
-def get_model_and_optimizer_path(params):
-	# FIX THIS WITH SOME EXPERIMENT IDENTIFER
-	return params["checkpoint_path"] + "/model_best.pt", params["checkpoint_path"] + "/optimizer_best.pt"
+def get_save_paths(params):
+	prefix 			= f'{params["checkpoint_path"]}/{params["experiment"]}_'
+	model_path 		= f'{prefix}model.pt'
+	train_stat_path = f'{prefix}stats.json'
+
+	return model_path, train_stat_path
+
+def get_existing_stats(train_stat_path, start_epoch):
+	train_stats = {
+		"epoch": 		[],
+		"train_loss": 	[],
+		"eval_loss":	[],
+		# ADD OTHER METRICS
+	}
+
+	if os.path.exists(train_stat_path):
+		existing_stats = json.load(open(train_stat_path), "r")
+
+		for key, val in existing_stats.items():
+			if key in train_stats:
+				train_stats[key] = val[:start_epoch - 1]
+
+	return train_stats
 
 def train_model(model, train_dataloader, eval_dataloader, device, params):
 	model.train()
 
+	start_epoch = 1
 	optimizer 	= get_optimizer(model, params)
-	# LOAD OPTIMIZER FROM EXISTISTING CHECKPOINT IF AVAILABLE
+	model_path, train_stat_path = get_save_paths(params)
+	if params["resume_training"] is True and os.path.exists(model_path):
+		model_details 	= torch.load(model_path)
+		start_epoch		= model_details["epoch"] + 1 # Start from the epoch after the checkpoint
+		model.load_state_dict(model_details["model"])
+		optimizer.load_state_dict(model_details["model"])
 
-	for epoch in range(1, params["num_epochs"] + 1):
+	train_stats = get_existing_stats(train_stat_path, start_epoch)
+
+	for epoch in range(start_epoch, params["num_epochs"] + 1):
 		train_loss 	= train_epoch(model, optimizer, train_dataloader, device, params)
 		# HAVE EVAL AFTER A FEW EPOCHS RATHER THAN EVERY EPOCH??
 		eval_loss 	= eval_epoch(model, eval_dataloader, device, params)
+
 		# PRINT STATS
+		
+		train_stats["epoch"].append(epoch)
+		train_stats["train_loss"].append(train_loss)
+		train_stats["eval_loss"].append(eval_loss)
 
-		# SAVE MODEL AND OPTIMIZER ON SOME CONDITION
-		model_path, optimizer_path = get_model_and_optimizer_path(params)
-		torch.save(model.state_dict(), model_path)
-		torch.save(optimizer.state_dict(), optimizer_path)
+		with open(train_stat_path, "w") as f:
+			json.dump(train_stats, f)
 
-	# LOAD THE BEST MODEL HERE BEFORE RETURNING?
+		# SAVE MODEL AND OPTIMIZER ON SOME CONDITION, ALSO SAVE THE CONDITION IN THE PATH AS WELL
+		torch.save({
+			"epoch": 		epoch,
+			"model": 		model.state_dict(),
+			"optimizer":	optimizer.state_dict()
+		}, model_path)
+
 	return model
 
 if __name__ == "__main__":
@@ -170,7 +209,6 @@ if __name__ == "__main__":
 
 	model 	= get_model(params)
 	model 	= model.to(device)
-	# LOAD MODEL FROM EXISTING CHECKPOINT IF AVAILABLE
 
 	train_model(model, train_dataloader, eval_dataloader, device, params)
 
