@@ -23,7 +23,7 @@ class VideoEncoder(nn.Module):
 
 class QueryEncoder(nn.Module):
 
-	def __init__(self, max_length = 13, lstm_hidden_size = 256):
+	def __init__(self, max_query_length = 13, lstm_hidden_size = 256):
 		super(QueryEncoder, self).__init__()
 
 		self.lstm = nn.LSTM(input_size = 300, hidden_size = lstm_hidden_size, num_layers = 2, bidirectional = True, batch_first = True)
@@ -37,11 +37,11 @@ class QueryEncoder(nn.Module):
 
 class Backbone(nn.Module):
 
-	def __init__(self, T = 64, d = 512, max_length = 13, lstm_hidden_size = 256):
+	def __init__(self, T = 64, d = 512, max_query_length = 13, lstm_hidden_size = 256):
 		super(Backbone, self).__init__()
 
 		self.videoencoder = VideoEncoder(T, d)
-		self.queryencoder = QueryEncoder(max_length, lstm_hidden_size)
+		self.queryencoder = QueryEncoder(max_query_length, lstm_hidden_size)
 
 	def forward(self, video_features, video_mask, query_features):
 		fv 		= self.videoencoder(video_features, video_mask)
