@@ -1,4 +1,4 @@
-from dataset import CharadesSTA
+from dataset import CharadesSTA, ActivityNet, TACoS
 from models import Backbone
 from torch.utils.data import DataLoader
 from utils import loss_fn
@@ -24,11 +24,15 @@ def get_datasets(params):
 	dataset = None
 	if params["dataset"] == "charadessta":
 		dataset = CharadesSTA
+	elif params["dataset"] == "activitynet":
+		dataset = ActivityNet
+	elif params["dataset"] == "tacos":
+		dataset = TACoS
 	else:
 		raise Exception(f'Dataset {params["dataset"]} is not a valid dataset!')
 
 	train_dataset 	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "train")
-	eval_dataset	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "test")
+	eval_dataset	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "test" if params["dataset"] == "charadessta" else "val")
 
 	return train_dataset, eval_dataset
 
@@ -55,7 +59,7 @@ def get_model(params):
 	model = None
 	if params["model"] == "SMIN":
 		# LOAD APPROPRIATE MODEL
-		model = Backbone(params["T"], params["d"], params["max_query_length"], params["lstm_hidden_size"])
+		model = Backbone(params["T"], params["d"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"])
 	else:
 		raise Exception(f'Model {params["model"]} is not a valid model!')
 

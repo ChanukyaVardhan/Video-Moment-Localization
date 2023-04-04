@@ -6,14 +6,15 @@ T:                  128             # Number of frames to sample
 L:                  64              # L x L moments out of T frames
 C:                  4               # divide frame features in a moment into C parts
 d:                  512             # Feature dimensions
+input_video_dim:    500             # C3D features dimension after PCA
 dl:                 128             # Feature dimensions for Content-word interactions
 max_query_length:   20              # Max length of the query
 lstm_hidden_size:   256             # lstm hidden size
 num_layers:         3               # Number of Structured Multi-Level Interactions
 
 # data
-dataset:            "charadessta"   # Dataset name
-data_dir:           "data/charades" # Data directory
+dataset:            "activitynet"   # Dataset name
+data_dir:           "data/activitynet" # Data directory
 batch_size:         64              # Batch Size
 num_workers:        4               # Number of workers for data loader
 

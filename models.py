@@ -3,12 +3,16 @@ import torch.nn as nn
 
 class VideoEncoder(nn.Module):
 
-	def __init__(self, T = 64, d = 512):
+	def __init__(self, T = 64, d = 512, input_video_dim = 1024):
 		super(VideoEncoder, self).__init__()
 
 		self.T 	= T
 		self.d 	= d
-		self.ve = nn.Linear(1024, self.d) # Video Embedding to convert 1024 to 512
+		self.d0 = input_video_dim
+		# CHECK - IS THIS CORRECT?
+		# PAPER FORM WHICH CHARADES WAS PICKED USES LINEAR LAYER - self.vid_emb_fn
+		# PAPER FROM WHICH OTHER TWO DATASETS WAS PICKED USED 1D CONVOLUTION LAYER - self.vis_conv
+		self.ve = nn.Linear(self.d0, self.d) # Video Embedding to convert input video feature space to 512
 		self.pe = nn.Embedding(self.T, self.d) # Positional Encoding
 
 	def forward(self, video_features, video_mask):
@@ -37,10 +41,10 @@ class QueryEncoder(nn.Module):
 
 class Backbone(nn.Module):
 
-	def __init__(self, T = 64, d = 512, max_query_length = 13, lstm_hidden_size = 256):
+	def __init__(self, T = 64, d = 512, input_video_dim = 1024, max_query_length = 13, lstm_hidden_size = 256):
 		super(Backbone, self).__init__()
 
-		self.videoencoder = VideoEncoder(T, d)
+		self.videoencoder = VideoEncoder(T, d, input_video_dim)
 		self.queryencoder = QueryEncoder(max_query_length, lstm_hidden_size)
 
 	def forward(self, video_features, video_mask, query_features):

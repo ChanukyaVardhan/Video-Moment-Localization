@@ -124,7 +124,6 @@ class AbstractDataset(Dataset):
 class CharadesSTA(AbstractDataset):
 
 	def __init__(self, data_dir = 'data/charades', T = 64, max_query_length = 13, split = 'train'):
-		self.dataset_name 		= "charadessta"
 		self.data_dir 			= data_dir
 		self.T 					= T
 		self.max_query_length 	= max_query_length
@@ -172,7 +171,6 @@ class CharadesSTA(AbstractDataset):
 class ActivityNet(AbstractDataset):
 
 	def __init__(self, data_dir = 'data/activitynet', T = 128, max_query_length = 20, split = 'train'):
-		self.dataset_name 		= "activitynet"
 		self.data_dir 			= data_dir
 		self.T 					= T
 		self.max_query_length 	= max_query_length
@@ -209,6 +207,45 @@ class ActivityNet(AbstractDataset):
 	def _load_video_features(self, vid):
 		return h5py.File(self.feature_path, "r")[vid]['c3d_features'][:]
 
+class TACoS(AbstractDataset):
+
+	def __init__(self, data_dir = 'data/tacos', T = 128, max_query_length = 14, split = 'train'):
+		self.data_dir 			= data_dir
+		self.T 					= T
+		self.max_query_length 	= max_query_length
+		self.split 				= split
+
+		self.feature_path 		= self.data_dir + "/tall_c3d_features.hdf5"
+		ann_path 				= self.data_dir + "/{}.json".format(self.split)
+
+		self.annotations 		= self._load_annotations(ann_path)
+
+	def _load_annotations(self, ann_path):
+		anns = json.load(open(ann_path, "r"))
+
+		annotations = []
+		for vid, ann in anns.items():
+			duration = ann["num_frames"] / ann["fps"]
+			for (spos, epos), query in zip(ann["timestamps"], ann["sentences"]):
+				spos = max(spos / ann["fps"], 0)
+				epos = min(epos / ann["fps"], duration)
+				if spos < epos:
+					token_idx, query_features = self.get_query_features(query)
+
+					annotations.append({
+							'video_id': 		vid,
+							'times': 			[spos, epos],
+							'duration': 		duration,
+							'query': 			query,
+							'token_idx': 		token_idx,
+							'query_features': 	query_features,
+						})
+
+		return annotations
+
+	def _load_video_features(self, vid):
+		return h5py.File(self.feature_path, "r")[vid][:]
+
 if __name__ == "__main__":
 	batch_s = 64
 	n_work  = 4
@@ -231,4 +268,14 @@ if __name__ == "__main__":
 		assert (batch['video_features'].shape[1] == dataset.T) and (batch['query_features'].shape[1] == dataset.max_query_length)
 		count += batch['video_features'].shape[0];
 	print(f"# of training samples in ActivityNet: {count}")
+	print(f"Total elapsed time ({(time.time() - st_time):.5f}sec)")
+
+	dataset	= TACoS(split = 'train', T = 128, max_query_length = 14)
+	loader 	= DataLoader(dataset, batch_size = batch_s, shuffle = True, collate_fn = dataset.collate_fn, num_workers = n_work)
+	st_time = time.time()
+	count 	= 0
+	for batch in loader:
+		assert (batch['video_features'].shape[1] == dataset.T) and (batch['query_features'].shape[1] == dataset.max_query_length)
+		count += batch['video_features'].shape[0];
+	print(f"# of training samples in TACoS: {count}")
 	print(f"Total elapsed time ({(time.time() - st_time):.5f}sec)")
