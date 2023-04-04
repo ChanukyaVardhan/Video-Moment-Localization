@@ -93,7 +93,7 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 		# UPDATE THIS ACCORDINGLY
 		loss 			= loss_fn(outputs, start_pos, end_pos)
 
-		train_loss 	   += loss # FIX THIS
+		train_loss 	   += loss.item() # FIX THIS
 		# COMPUTE IOU AS ACCURACY HERE?
 
 		loss.backward()
@@ -123,7 +123,7 @@ def eval_epoch(model, eval_dataloader, device, params):
 		# UPDATE THIS ACCORDINGLY
 		loss 			= loss_fn(outputs, start_pos, end_pos)
 
-		eval_loss 	   += loss # FIX THIS
+		eval_loss 	   += loss.item() # FIX THIS
 		# COMPUTE IOU AS ACCURACY HERE?
 
 		num_samples    += start_pos.shape[0]
@@ -139,7 +139,7 @@ def get_save_paths(params):
 
 	return model_path, train_stat_path
 
-def get_existing_stats(train_stat_path, start_epoch):
+def get_existing_stats(train_stat_path, start_epoch, params):
 	train_stats = {
 		"epoch": 		[],
 		"train_loss": 	[],
@@ -147,8 +147,8 @@ def get_existing_stats(train_stat_path, start_epoch):
 		# ADD OTHER METRICS
 	}
 
-	if os.path.exists(train_stat_path):
-		existing_stats = json.load(open(train_stat_path), "r")
+	if params["resume_training"] and os.path.exists(train_stat_path):
+		existing_stats = json.load(open(train_stat_path, "r"))
 
 		for key, val in existing_stats.items():
 			if key in train_stats:
@@ -162,13 +162,13 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
 	start_epoch = 1
 	optimizer 	= get_optimizer(model, params)
 	model_path, train_stat_path = get_save_paths(params)
-	if params["resume_training"] is True and os.path.exists(model_path):
+	if params["resume_training"] and os.path.exists(model_path):
 		model_details 	= torch.load(model_path)
 		start_epoch		= model_details["epoch"] + 1 # Start from the epoch after the checkpoint
 		model.load_state_dict(model_details["model"])
-		optimizer.load_state_dict(model_details["model"])
+		optimizer.load_state_dict(model_details["optimizer"])
 
-	train_stats = get_existing_stats(train_stat_path, start_epoch)
+	train_stats = get_existing_stats(train_stat_path, start_epoch, params)
 
 	for epoch in range(start_epoch, params["num_epochs"] + 1):
 		train_loss 	= train_epoch(model, optimizer, train_dataloader, device, params)
