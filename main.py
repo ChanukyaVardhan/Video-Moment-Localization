@@ -31,6 +31,7 @@ def get_datasets(params):
 	else:
 		raise Exception(f'Dataset {params["dataset"]} is not a valid dataset!')
 
+	# CHCEK - FIX EVAL DATASET FOR CHARADESSTA BY SPLITTING TRAIN SET.
 	train_dataset 	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "train")
 	eval_dataset	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "test" if params["dataset"] == "charadessta" else "val")
 
@@ -122,6 +123,7 @@ def eval_epoch(model, eval_dataloader, device, params):
 		start_pos 		= batch["start_pos"].to(device)
 		end_pos 		= batch["end_pos"].to(device)
 
+		# FIX THIS APPROPRIATELY
 		outputs 		= model(video_features, video_mask, query_features)
 
 		# UPDATE THIS ACCORDINGLY
@@ -216,6 +218,6 @@ if __name__ == "__main__":
 
 	train_model(model, train_dataloader, eval_dataloader, device, params)
 
-	# EVAL MODEL
+	# TEST ACCURACY
 
 	

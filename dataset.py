@@ -64,6 +64,9 @@ class AbstractDataset(Dataset):
 				start_index = i
 
 		cur_feat 		 	= feat[frame_idx, :]
+		# SHOULD WE TAKE THE MEAN BETWEEN FRAME INDICES
+		# CODE LINKED TO CHARADES STA DOESN'T TAKE MEAN - https://github.com/JonghwanMun/LGI4temporalgrounding/blob/master/src/dataset/abstract_dataset.py#L143
+		# CODE LINKED TO TACOS AND ACTIVITYNET TAKES MEAN - https://github.com/microsoft/VideoX/blob/4e24d431e9e56b1aa370d881bd5031c6a8441769/2D-TAN/lib/datasets/__init__.py#L39
 		nfeats 				= min(nfeats, self.T)
 		out 			 	= np.zeros((self.T, cur_feat.shape[1])) # if T is > number of features, we have 0's for the last frames
 		out[:nfeats, :]  	= cur_feat
