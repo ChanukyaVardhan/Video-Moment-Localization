@@ -72,6 +72,7 @@ def compute_content_matrix(T, L, C):
 				clip_start = window_start + c*clip_size
 				Wc[i, j, c, clip_start : clip_start + clip_size] = 1/clip_size
 	return Wc
+
 class ProposalGeneration(nn.Module):
 	
 	# How to deal with the case where L does not divide T?
@@ -100,8 +101,10 @@ class ProposalGeneration(nn.Module):
 		return fc, fm, fb
 
 class Attention(nn.Module):
+
     def __init__(self, D):
         super(Attention, self).__init__()
+
         self.D, self.attn_weights = D, None
         self.W_q = nn.Linear(D, D)
         self.W_k = nn.Linear(D, D)
@@ -119,8 +122,10 @@ class Attention(nn.Module):
         return attn_out
 
 class BoundaryUnit(nn.Module):
+
     def __init__(self, D):
         super(BoundaryUnit, self).__init__()
+
         self.D = D
         self.attn_layer = Attention(D)
     
@@ -144,8 +149,10 @@ class BoundaryUnit(nn.Module):
         return f_bb + f_b + f_bm
 
 class ContentAttention(nn.Module):
+
     def __init__(self, D):
         super(ContentAttention, self).__init__()
+
         self.D, self.attn_weights = D, None
         self.W_q = nn.Linear(D, D)
         self.W_k = nn.Linear(D, D)
@@ -165,8 +172,10 @@ class ContentAttention(nn.Module):
         return attn_out
 
 class ContentUnit(nn.Module):
+
     def __init__(self, D, dl):
         super(ContentUnit, self).__init__()
+
         self.D = D
         self.dl = dl
         # IS CONOVLUTION THE CORRECT WAY TO REDUCE CHANNELS?
@@ -202,8 +211,10 @@ class ContentUnit(nn.Module):
         return f_cc + f_c + fbar_m.unsqueeze(3)
 
 class MomentUnit(nn.Module):
+
 	def __init__(self, L):
 		super(MomentUnit, self).__init__()
+
 		#need it's own convolutional layer and linear layers
 		self.L = L
 		#REVIEW THESE CONVOLUTIONAL LAYERS LATER
@@ -221,9 +232,12 @@ class MomentUnit(nn.Module):
 		conv_fb = self.conv_layer_fb(f_b_s*f_b_e)		
 		conv_fc = self.conv_layer_fc(f_c_mean)
 		return conv_fb + conv_fc + f_m
+
 class SMI(nn.Module):
+
 	def __init__(self, D, dl, L):
 		super(SMI, self).__init__()
+
 		self.D = D
 		self.dl = dl
 		self.L = L
@@ -231,7 +245,9 @@ class SMI(nn.Module):
 		self.boundary_unit = BoundaryUnit(D)
 		self.moment_unit = MomentUnit(L)		
 		#assuming that the weights across all CUs are shared and lly for others
+
 	def forward(self, f_c, f_m, f_b, f_w, f_s):
+		# SHALL WE PARAMETRIZE THE NUMBER OF LAYERS IN SMI?
 		#first layer
 		cu1 = self.content_unit(f_c, f_w, f_s, f_m)
 		bu1 = self.boundary_unit(f_b, f_w, f_s, f_m)
@@ -247,12 +263,15 @@ class SMI(nn.Module):
 		return mu3, bu3
 
 class Localization(nn.Module):
+
 	def __init__(self, D):
-		super(Localization,self).__init__()		
+		super(Localization,self).__init__()
+
 		self.conv_layer_pm = nn.Conv2d(D, 1, 1)
 		self.conv_layer_ps = nn.Conv1d(D, 1, 1)
 		self.conv_layer_pe = nn.Conv1d(D, 1, 1)
 		self.sigmoid = nn.Sigmoid()
+
 	def forward(self, f_m, f_b):
 		# f_m: (B, L, L, D) -> p_m: (B, L, L)
 		p_m = self.sigmoid(self.conv_layer_pm(f_m.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)).squeeze(3)
@@ -262,6 +281,32 @@ class Localization(nn.Module):
 		p_e = self.sigmoid(self.conv_layer_pe(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
 		return p_m, p_s, p_e
 
+class SMIN(nn.Module):
 
+	def __init__(self, T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size):
+		super(SMIN, self).__init__()
 
+		self.T 					= T
+		self.L 					= L
+		self.C 					= C
+		self.D 					= D
+		self.dl 				= dl
+		self.input_video_dim	= input_video_dim
+		self.max_query_length 	= max_query_length
+		self.lstm_hidden_size	= lstm_hidden_size
 
+		self.backbone 			= Backbone(self.T, self.D, self.input_video_dim, self.max_query_length, self.lstm_hidden_size)
+		self.pgm 				= ProposalGeneration(self.T, self.L, self.C)
+		self.smi 				= SMI(self.D, self.dl, self.L)
+		self.localization		= Localization(self.D)
+
+	def forward(self, video_features, video_mask, query_features):
+		f, fs, fw 				= self.backbone(video_features, video_mask, query_features)
+
+		fc, fm, fb 				= self.pgm(f)
+
+		fm_, fb_ 				= self.smi(fc, fm, fb, fw, fs)
+
+		pm, ps, pe 				= self.localization(fm_, fb_)
+
+		return pm, ps, pe

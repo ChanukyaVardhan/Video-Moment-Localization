@@ -1,5 +1,5 @@
 from dataset import CharadesSTA, ActivityNet, TACoS
-from models import Backbone
+from models import SMIN
 from torch.utils.data import DataLoader
 from utils import loss_fn
 
@@ -59,8 +59,7 @@ def get_dataloaders(params, train_dataset, eval_dataset):
 def get_model(params):
 	model = None
 	if params["model"] == "SMIN":
-		# LOAD APPROPRIATE MODEL
-		model = Backbone(params["T"], params["d"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"])
+		model = SMIN(params["T"], params["L"], params["C"], params["d"], params["dl"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"])
 	else:
 		raise Exception(f'Model {params["model"]} is not a valid model!')
 

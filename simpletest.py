@@ -69,7 +69,23 @@ print(pe.shape)
 print('sample values of pm, ps and pe - all values should be around 0.5 since the network is untrained')
 print(pm[0])
 print(ps[0])
-print(pe[0]) 
+print(pe[0])
+
+# Whole Model
+T = 64
+input_video_dim = 1024
+max_query_length = 13
+lstm_hidden_size = 256
+smin = SMIN(T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size)
+pm, ps, pe = smin(video_features, video_mask, query_features)
+print('Localization layer output shape pm, ps, pe')
+print(pm.shape)
+print(ps.shape)
+print(pe.shape)
+print('sample values of pm, ps and pe - all values should be around 0.5 since the network is untrained')
+print(pm[0])
+print(ps[0])
+print(pe[0])
 
 #Loss Function Test
 
