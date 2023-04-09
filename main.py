@@ -1,7 +1,6 @@
 from dataset import CharadesSTA, ActivityNet, TACoS
-from models import SMIN
+from models import SMIN, CustomBCELoss
 from torch.utils.data import DataLoader
-from utils import loss_fn
 
 import argparse
 import json
@@ -32,8 +31,8 @@ def get_datasets(params):
 		raise Exception(f'Dataset {params["dataset"]} is not a valid dataset!')
 
 	# CHCEK - FIX EVAL DATASET FOR CHARADESSTA BY SPLITTING TRAIN SET.
-	train_dataset 	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "train")
-	eval_dataset	= dataset(params["data_dir"], params["T"], params["max_query_length"], split = "test" if params["dataset"] == "charadessta" else "val")
+	train_dataset 	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "train")
+	eval_dataset	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "test" if params["dataset"] == "charadessta" else "val")
 
 	return train_dataset, eval_dataset
 
@@ -77,6 +76,20 @@ def get_optimizer(model, params):
 
 	return optimizer
 
+def bce_loss(p, y, s, mask):
+	loss = CustomBCELoss()(p, y, s) * mask
+	loss = torch.sum(loss) / torch.sum(mask)
+
+	return loss
+
+def loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask):
+	L_m = bce_loss(pm, ym, sm, moment_mask)
+	L_s = bce_loss(ps, ys, ss, length_mask)
+	L_e = bce_loss(pe, ye, se, length_mask)
+	L_a = bce_loss(pa, ya, None, length_mask)
+
+	return L_m + L_s + L_e + 0.5 * L_a
+
 def train_epoch(model, optimizer, train_dataloader, device, params):
 	model.train()
 	train_loss 		= 0.0
@@ -87,15 +100,22 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 		video_mask 		= batch["video_mask"].to(device)
 		query_features 	= batch["query_features"].to(device)
 		query_mask 		= batch["query_mask"].to(device)
-		start_pos 		= batch["start_pos"].to(device)
-		end_pos 		= batch["end_pos"].to(device)
+		length_mask 	= batch["length_mask"].to(device)
+		moment_mask 	= batch["moment_mask"].to(device)
+		sm 				= batch["sm"].to(device)
+		ym 				= batch["ym"].to(device)
+		ss 				= batch["ss"].to(device)
+		ys 				= batch["ys"].to(device)
+		se 				= batch["se"].to(device)
+		ye 				= batch["ye"].to(device)
+		ya 				= batch["ya"].to(device)
+		batch_size 		= video_features.shape[0]
 
 		optimizer.zero_grad()
 
-		outputs 		= model(video_features, video_mask, query_features)
+		pm, ps, pe, pa 	= model(video_features, video_mask, query_features)
 
-		# UPDATE THIS ACCORDINGLY
-		loss 			= loss_fn(outputs, start_pos, end_pos)
+		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
 		train_loss 	   += loss.item() # FIX THIS
 		# COMPUTE IOU AS ACCURACY HERE?
@@ -103,7 +123,7 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 		loss.backward()
 		optimizer.step()
 
-		num_samples    += start_pos.shape[0]
+		num_samples    += batch_size
 
 	train_loss /= num_samples
 
@@ -119,19 +139,25 @@ def eval_epoch(model, eval_dataloader, device, params):
 		video_mask 		= batch["video_mask"].to(device)
 		query_features 	= batch["query_features"].to(device)
 		query_mask 		= batch["query_mask"].to(device)
-		start_pos 		= batch["start_pos"].to(device)
-		end_pos 		= batch["end_pos"].to(device)
+		length_mask 	= batch["length_mask"].to(device)
+		moment_mask 	= batch["moment_mask"].to(device)
+		sm 				= batch["sm"].to(device)
+		ym 				= batch["ym"].to(device)
+		ss 				= batch["ss"].to(device)
+		ys 				= batch["ys"].to(device)
+		se 				= batch["se"].to(device)
+		ye 				= batch["ye"].to(device)
+		ya 				= batch["ya"].to(device)
+		batch_size 		= video_features.shape[0]
 
-		# FIX THIS APPROPRIATELY
-		outputs 		= model(video_features, video_mask, query_features)
+		pm, ps, pe, pa 	= model(video_features, video_mask, query_features)
 
-		# UPDATE THIS ACCORDINGLY
-		loss 			= loss_fn(outputs, start_pos, end_pos)
+		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
 		eval_loss 	   += loss.item() # FIX THIS
 		# COMPUTE IOU AS ACCURACY HERE?
 
-		num_samples    += start_pos.shape[0]
+		num_samples    += batch_size
 
 	eval_loss /= num_samples
 

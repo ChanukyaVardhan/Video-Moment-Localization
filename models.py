@@ -270,6 +270,7 @@ class Localization(nn.Module):
 		self.conv_layer_pm = nn.Conv2d(D, 1, 1)
 		self.conv_layer_ps = nn.Conv1d(D, 1, 1)
 		self.conv_layer_pe = nn.Conv1d(D, 1, 1)
+		self.conv_layer_pa = nn.Conv1d(D, 1, 1)
 		self.sigmoid = nn.Sigmoid()
 
 	def forward(self, f_m, f_b):
@@ -279,7 +280,9 @@ class Localization(nn.Module):
 		p_s = self.sigmoid(self.conv_layer_ps(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
 		# f_b: (B, L, D) -> p_e: (B, L)
 		p_e = self.sigmoid(self.conv_layer_pe(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
-		return p_m, p_s, p_e
+		# f_b: (B, L, D) -> p_a: (B, L)
+		p_a = self.sigmoid(self.conv_layer_pa(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
+		return p_m, p_s, p_e, p_a
 
 class SMIN(nn.Module):
 
@@ -307,6 +310,21 @@ class SMIN(nn.Module):
 
 		fm_, fb_ 				= self.smi(fc, fm, fb, fw, fs)
 
-		pm, ps, pe 				= self.localization(fm_, fb_)
+		pm, ps, pe, pa 			= self.localization(fm_, fb_)
 
-		return pm, ps, pe
+		return pm, ps, pe, pa
+
+class CustomBCELoss(nn.Module):
+
+	def __init__(self):
+		super(CustomBCELoss, self).__init__()
+
+	def forward(self, p, y, s):
+		if s is not None:
+			loss = -(y * s * torch.maximum(torch.log(p), torch.full((), -100)) + \
+					(~y) * (1 - s) * torch.maximum(torch.log(1 - p), torch.full((), -100)))
+		else:
+			loss = -(y * torch.maximum(torch.log(p), torch.full((), -100)) + \
+					(~y) * torch.maximum(torch.log(1 - p), torch.full((), -100)))
+
+		return loss
