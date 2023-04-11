@@ -58,7 +58,7 @@ def get_dataloaders(params, train_dataset, eval_dataset):
 def get_model(params):
 	model = None
 	if params["model"] == "SMIN":
-		model = SMIN(params["T"], params["L"], params["C"], params["d"], params["dl"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"])
+		model = SMIN(params["T"], params["L"], params["C"], params["d"], params["dl"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"], params["device"])
 	else:
 		raise Exception(f'Model {params["model"]} is not a valid model!')
 
@@ -78,7 +78,13 @@ def get_optimizer(model, params):
 
 def bce_loss(p, y, s, mask):
 	loss = CustomBCELoss()(p, y, s) * mask
-	loss = torch.sum(loss) / torch.sum(mask)
+	if mask.dim() == 3: # L_m case
+		loss = torch.sum(loss, dim = (1, 2)) / torch.sum(mask, dim = (1, 2))
+	else: # L_s, L_e, L_a cases
+		loss = torch.sum(loss, dim = 1) / torch.sum(mask, dim = 1)
+
+	# B x 1 -> 1
+	loss = torch.sum(loss)
 
 	return loss
 
@@ -117,7 +123,7 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
-		train_loss 	   += loss.item() # FIX THIS
+		train_loss 	   += loss.item()
 		# COMPUTE IOU AS ACCURACY HERE?
 
 		loss.backward()
@@ -154,7 +160,7 @@ def eval_epoch(model, eval_dataloader, device, params):
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
-		eval_loss 	   += loss.item() # FIX THIS
+		eval_loss 	   += loss.item()
 		# COMPUTE IOU AS ACCURACY HERE?
 
 		num_samples    += batch_size
@@ -202,11 +208,13 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
 	train_stats = get_existing_stats(train_stat_path, start_epoch, params)
 
 	for epoch in range(start_epoch, params["num_epochs"] + 1):
+		print(f"Training Epoch - {epoch}")
 		train_loss 	= train_epoch(model, optimizer, train_dataloader, device, params)
 		# HAVE EVAL AFTER A FEW EPOCHS RATHER THAN EVERY EPOCH??
 		eval_loss 	= eval_epoch(model, eval_dataloader, device, params)
 
-		# PRINT STATS
+		# Print Stats
+		print(f"Training Loss - {train_loss:.4f}, Eval Loss - {eval_loss:.4f}")
 		
 		train_stats["epoch"].append(epoch)
 		train_stats["train_loss"].append(train_loss)
@@ -234,6 +242,7 @@ if __name__ == "__main__":
 	torch.backends.cudnn.deterministic = True
 
 	device	= torch.device("cuda" if torch.cuda.is_available() else "cpu")
+	params["device"] = device
 
 	train_dataset, eval_dataset 		= get_datasets(params)
 	train_dataloader, eval_dataloader 	= get_dataloaders(params, train_dataset, eval_dataset)

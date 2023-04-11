@@ -8,22 +8,24 @@ import torch.nn as nn
 
 class VideoEncoder(nn.Module):
 
-	def __init__(self, T = 64, d = 512, input_video_dim = 1024):
+	def __init__(self, T = 64, d = 512, input_video_dim = 1024, device = 'cpu'):
 		super(VideoEncoder, self).__init__()
 
-		self.T 	= T
-		self.d 	= d
-		self.d0 = input_video_dim
+		self.T 		= T
+		self.d 		= d
+		self.d0 	= input_video_dim
+		self.device = device
 		# CHECK - IS THIS CORRECT?
 		# PAPER FORM WHICH CHARADES WAS PICKED USES LINEAR LAYER - self.vid_emb_fn
 		# PAPER FROM WHICH OTHER TWO DATASETS WAS PICKED USED 1D CONVOLUTION LAYER - self.vis_conv
-		self.ve = nn.Linear(self.d0, self.d) # Video Embedding to convert input video feature space to 512
-		self.pe = nn.Embedding(self.T, self.d) # Positional Encoding
+		self.ve 	= nn.Linear(self.d0, self.d) # Video Embedding to convert input video feature space to 512
+		self.pe 	= nn.Embedding(self.T, self.d) # Positional Encoding
 
 	def forward(self, video_features, video_mask):
 		x = self.ve(video_features) * video_mask.float()
 
-		p = torch.arange(0, video_mask.shape[1]).unsqueeze(0).long()
+		# CHECK - WILL THIS BE A TRAINABLE PARAMETER?
+		p = torch.arange(0, video_mask.shape[1]).unsqueeze(0).long().to(self.device)
 		p = self.pe(p) * video_mask.float()
 
 		x += p
@@ -46,10 +48,10 @@ class QueryEncoder(nn.Module):
 
 class Backbone(nn.Module):
 
-	def __init__(self, T = 64, d = 512, input_video_dim = 1024, max_query_length = 13, lstm_hidden_size = 256):
+	def __init__(self, T = 64, d = 512, input_video_dim = 1024, max_query_length = 13, lstm_hidden_size = 256, device = 'cpu'):
 		super(Backbone, self).__init__()
 
-		self.videoencoder = VideoEncoder(T, d, input_video_dim)
+		self.videoencoder = VideoEncoder(T, d, input_video_dim, device)
 		self.queryencoder = QueryEncoder(max_query_length, lstm_hidden_size)
 
 	def forward(self, video_features, video_mask, query_features):
@@ -78,14 +80,16 @@ class ProposalGeneration(nn.Module):
 	# How to deal with the case where L does not divide T?
 	# Should Wc be placed on gpu? If so, how?
 	# Wc is a upper triangular matrix. Should we make it symmetric as we are using softmax.
-	def __init__(self, T = 64, L = 16, C = 4):
+	def __init__(self, T = 64, L = 16, C = 4, device = 'cpu'):
 		super(ProposalGeneration, self).__init__()
 
-		self.T = T
-		self.L = L
-		self.C = C
-		self.Wc = compute_content_matrix(T, L, C)
-		self.avg_pool = nn.AvgPool1d(T//L, stride=T//L)
+		self.T 			= T
+		self.L 			= L
+		self.C 			= C
+		self.device		= device
+		# CHECK - WILL Wc BECOME A TRAINABLE PARAMETER?
+		self.Wc 		= compute_content_matrix(T, L, C).to(self.device)
+		self.avg_pool 	= nn.AvgPool1d(T//L, stride=T//L)
 
 	def forward(self, f):
 		# Wc: (L, L, C, T), f: (B, T, D) -> fc: (B, L, L, C, D)
@@ -286,7 +290,7 @@ class Localization(nn.Module):
 
 class SMIN(nn.Module):
 
-	def __init__(self, T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size):
+	def __init__(self, T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size, device = 'cpu'):
 		super(SMIN, self).__init__()
 
 		self.T 					= T
@@ -297,9 +301,10 @@ class SMIN(nn.Module):
 		self.input_video_dim	= input_video_dim
 		self.max_query_length 	= max_query_length
 		self.lstm_hidden_size	= lstm_hidden_size
+		self.device 			= device
 
-		self.backbone 			= Backbone(self.T, self.D, self.input_video_dim, self.max_query_length, self.lstm_hidden_size)
-		self.pgm 				= ProposalGeneration(self.T, self.L, self.C)
+		self.backbone 			= Backbone(self.T, self.D, self.input_video_dim, self.max_query_length, self.lstm_hidden_size, self.device)
+		self.pgm 				= ProposalGeneration(self.T, self.L, self.C, self.device)
 		self.smi 				= SMI(self.D, self.dl, self.L)
 		self.localization		= Localization(self.D)
 
