@@ -30,7 +30,7 @@ def get_datasets(params):
 	else:
 		raise Exception(f'Dataset {params["dataset"]} is not a valid dataset!')
 
-	# CHCEK - FIX EVAL DATASET FOR CHARADESSTA BY SPLITTING TRAIN SET.
+	# CHCEK - FIX EVAL DATASET FOR CHARADESSTA BY SPLITTING TRAIN SET?
 	train_dataset 	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "train")
 	eval_dataset	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "test" if params["dataset"] == "charadessta" else "val")
 
@@ -77,6 +77,7 @@ def get_optimizer(model, params):
 	return optimizer
 
 def bce_loss(p, y, s, mask):
+	assert mask.sum().item() != 0
 	loss = CustomBCELoss()(p, y, s) * mask
 	if mask.dim() == 3: # L_m case
 		loss = torch.sum(loss, dim = (1, 2)) / torch.sum(mask, dim = (1, 2))
@@ -119,12 +120,12 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 
 		optimizer.zero_grad()
 
-		pm, ps, pe, pa 	= model(video_features, video_mask, query_features)
+		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask)
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
 		train_loss 	   += loss.item()
-		# COMPUTE IOU AS ACCURACY HERE?
+		# CHECK - COMPUTE IOU AS ACCURACY HERE?
 
 		loss.backward()
 		optimizer.step()
@@ -156,12 +157,12 @@ def eval_epoch(model, eval_dataloader, device, params):
 		ya 				= batch["ya"].to(device)
 		batch_size 		= video_features.shape[0]
 
-		pm, ps, pe, pa 	= model(video_features, video_mask, query_features)
+		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask)
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
 		eval_loss 	   += loss.item()
-		# COMPUTE IOU AS ACCURACY HERE?
+		# CHECK - COMPUTE IOU AS ACCURACY HERE?
 
 		num_samples    += batch_size
 
@@ -181,7 +182,7 @@ def get_existing_stats(train_stat_path, start_epoch, params):
 		"epoch": 		[],
 		"train_loss": 	[],
 		"eval_loss":	[],
-		# ADD OTHER METRICS
+		# FIX - ADD OTHER METRICS IF REQUIRED
 	}
 
 	if params["resume_training"] and os.path.exists(train_stat_path):
@@ -223,7 +224,7 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
 		with open(train_stat_path, "w") as f:
 			json.dump(train_stats, f)
 
-		# SAVE MODEL AND OPTIMIZER ON SOME CONDITION, ALSO SAVE THE CONDITION IN THE PATH AS WELL
+		# FIX - SAVE MODEL AND OPTIMIZER ON SOME CONDITION, ALSO SAVE THE CONDITION IN THE PATH AS WELL TO RELOAD FROM THAT CONDITION
 		torch.save({
 			"epoch": 		epoch,
 			"model": 		model.state_dict(),
@@ -252,6 +253,4 @@ if __name__ == "__main__":
 
 	train_model(model, train_dataloader, eval_dataloader, device, params)
 
-	# TEST ACCURACY
-
-	
+	# FIX - TEST ACCURACY

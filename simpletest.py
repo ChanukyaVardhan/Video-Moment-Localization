@@ -12,13 +12,13 @@ from models import *
 data = CharadesSTA()
 train_dataloader = DataLoader(data, batch_size = 64, shuffle = True, collate_fn = data.collate_fn)
 batch = next(iter(train_dataloader))
-video_features, query_features, video_mask = batch['video_features'], batch['query_features'], batch['video_mask']
+video_features, query_features, video_mask, query_mask, length_mask = batch['video_features'], batch['query_features'], batch['video_mask'], batch['query_mask'], batch['length_mask']
 start_pos, end_pos = batch['start_pos'], batch['end_pos']
 
 #model - forward pass
 #Backbone - convert these to assert later
 Backbone = Backbone()
-backbone_out = Backbone(video_features,video_mask, query_features)
+backbone_out = Backbone(video_features,video_mask, query_features, query_mask)
 print('printing backbone output shapes f, fs, fw')
 print(backbone_out[0].shape) #[64,64,512] == f video embedding -- intersting that all have 512 only. reminds so much of clip
 print(backbone_out[1].shape) #[64,512] == fs sentence
@@ -40,22 +40,22 @@ C = 4
 L = 16
 #Content Unit
 ContentUnit = ContentUnit(D, dl)
-cu = ContentUnit(fc, fw, fs, fm)
+cu = ContentUnit(fc, fw, fs, fm, query_mask)
 print('content unit output shape')
 print(cu.shape) #[64, 16, 16, 4, 512] #N, L, L, C, D == fc shape
 #Boundary Unit
 BoundaryUnit = BoundaryUnit(D)
-bu = BoundaryUnit(fb, fw, fs, fm)
+bu = BoundaryUnit(fb, fw, fs, fm, query_mask, length_mask)
 print('boundary unit output shape')
 print(bu.shape) #[64, 16, 512] #N, L, D == fb shape
 #Moment Unit
-myMomentUnit = MomentUnit(L)
+myMomentUnit = MomentUnit(D)
 mu = myMomentUnit(fc, fm, fb)
 print('moment unit output shape')
 print(mu.shape)
 #SMI
-SMI = SMI(D, dl, L)
-mu3, bu3 = SMI(fc, fm, fb, fw, fs)
+SMI = SMI(D, dl)
+mu3, bu3 = SMI(fc, fm, fb, fw, fs, query_mask, length_mask)
 print('smi layer output shape mu3 and bu3')
 print(mu3.shape)
 print(bu3.shape)
@@ -79,7 +79,7 @@ input_video_dim = 1024
 max_query_length = 13
 lstm_hidden_size = 256
 smin = SMIN(T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size)
-pm, ps, pe, pa = smin(video_features, video_mask, query_features)
+pm, ps, pe, pa = smin(video_features, video_mask, query_features, query_mask, length_mask)
 print('Localization layer output shape pm, ps, pe, pa')
 print(pm.shape)
 print(ps.shape)

@@ -65,7 +65,7 @@ class AbstractDataset(Dataset):
 				start_index = i
 
 		cur_feat 		 	= feat[frame_idx, :]
-		# SHOULD WE TAKE THE MEAN BETWEEN FRAME INDICES
+		# CHECK - SHOULD WE TAKE THE MEAN BETWEEN FRAME INDICES
 		# CODE LINKED TO CHARADES STA DOESN'T TAKE MEAN - https://github.com/JonghwanMun/LGI4temporalgrounding/blob/master/src/dataset/abstract_dataset.py#L143
 		# CODE LINKED TO TACOS AND ACTIVITYNET TAKES MEAN - https://github.com/microsoft/VideoX/blob/4e24d431e9e56b1aa370d881bd5031c6a8441769/2D-TAN/lib/datasets/__init__.py#L39
 		nfeats 				= min(nfeats, self.T)
@@ -137,6 +137,7 @@ class AbstractDataset(Dataset):
 		query_features 			= annotation['query_features']
 		
 		video_features_all 		= self._load_video_features(vid)
+		# CHECK - SHOULD THE VIDEO FEATURES BE NORMALIZED?
 		video_features, nfeats, start_index, end_index = self.get_fixed_length_features(video_features_all, spos_n, epos_n)
 		video_mask 				= np.zeros((self.T, 1))
 		video_mask[:nfeats] 	= 1
@@ -169,7 +170,7 @@ class AbstractDataset(Dataset):
 			'end_index': 		end_index, 																	# End index in sampled features
 
 			'query_features': 	query_features.unsqueeze(0), 												# Sentence query features
-			'query_mask': 		(annotation['token_idx'] < self.vocab.stoi['<pad>']).byte().unsqueeze(0),	# Sentence query mask
+			'query_mask': 		(annotation['token_idx'] < self.vocab.stoi['<pad>']).byte().unsqueeze(0).unsqueeze(-1),	# Sentence query mask
 
 			'length_mask': 		torch.BoolTensor(length_mask).unsqueeze(0),									# Mask in the L space
 			'moment_mask': 		torch.BoolTensor(moment_mask).unsqueeze(0),									# Mask in the LxL space
