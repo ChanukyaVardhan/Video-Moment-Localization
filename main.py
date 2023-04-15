@@ -1,6 +1,8 @@
+from collections import defaultdict
 from dataset import CharadesSTA, ActivityNet, TACoS
 from models import SMIN, CustomBCELoss
 from torch.utils.data import DataLoader
+from utils import compute_ious
 
 import argparse
 import json
@@ -11,15 +13,21 @@ import yaml
 def get_parameters():
 	parser 	= argparse.ArgumentParser()
 	parser.add_argument("--config_path", default = "config/charadessta.yml", help = "Path to config file.")
+	parser.add_argument("--num_epochs",  default = 0, type = int, help = "Number of epochs to override value in the config.")
+	parser.add_argument("--test",  	 	 default = False, action = "store_true", help = "Test the saved model for this config.")
 	args 	= parser.parse_args()
 
 	with open(args.config_path, "r") as f:
 		params = yaml.load(f, Loader=yaml.SafeLoader)
 	params["experiment"] = os.path.splitext(os.path.basename(args.config_path))[0]
+	params["test"]	 	 = args.test
+
+	if args.num_epochs != 0:
+		params["num_epochs"] = args.num_epochs
 
 	return params
 
-def get_datasets(params):
+def get_dataset(params):
 	dataset = None
 	if params["dataset"] == "charadessta":
 		dataset = CharadesSTA
@@ -30,30 +38,32 @@ def get_datasets(params):
 	else:
 		raise Exception(f'Dataset {params["dataset"]} is not a valid dataset!')
 
+	return dataset
+
+def get_training_datasets(params):
+	dataset 		= get_dataset(params)
 	# CHCEK - FIX EVAL DATASET FOR CHARADESSTA BY SPLITTING TRAIN SET?
 	train_dataset 	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "train")
 	eval_dataset	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "test" if params["dataset"] == "charadessta" else "val")
 
 	return train_dataset, eval_dataset
 
-def get_dataloaders(params, train_dataset, eval_dataset):
-	train_dataloader 	= DataLoader(
-		train_dataset,
+def get_test_dataset(params):
+	dataset 		= get_dataset(params)
+	test_dataset 	= dataset(params["data_dir"], params["T"], params["L"], params["max_query_length"], split = "test")
+
+	return test_dataset
+
+def get_dataloader(params, dataset, shuffle = False):
+	dataloader = DataLoader(
+		dataset,
 		batch_size 	= params["batch_size"],
-		shuffle 	= True,
-		collate_fn 	= train_dataset.collate_fn,
+		shuffle 	= shuffle,
+		collate_fn 	= dataset.collate_fn,
 		num_workers = params["num_workers"],
 	)
 
-	eval_dataloader		= DataLoader(
-		eval_dataset,
-		batch_size 	= params["batch_size"],
-		shuffle 	= False,
-		collate_fn 	= eval_dataset.collate_fn,
-		num_workers = params["num_workers"],
-	)
-
-	return train_dataloader, eval_dataloader
+	return dataloader
 
 def get_model(params):
 	model = None
@@ -85,7 +95,7 @@ def bce_loss(p, y, s, mask):
 		loss = torch.sum(loss, dim = 1) / torch.sum(mask, dim = 1)
 
 	# B x 1 -> 1
-	loss = torch.sum(loss)
+	loss = torch.mean(loss)
 
 	return loss
 
@@ -97,25 +107,30 @@ def loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask
 
 	return L_m + L_s + L_e + 0.5 * L_a
 
+def get_batch_entries(batch, device):
+	video_features 	= batch["video_features"].to(device)
+	video_mask 		= batch["video_mask"].to(device)
+	query_features 	= batch["query_features"].to(device)
+	query_mask 		= batch["query_mask"].to(device)
+	length_mask 	= batch["length_mask"].to(device)
+	moment_mask 	= batch["moment_mask"].to(device)
+	sm 				= batch["sm"].to(device)
+	ym 				= batch["ym"].to(device)
+	ss 				= batch["ss"].to(device)
+	ys 				= batch["ys"].to(device)
+	se 				= batch["se"].to(device)
+	ye 				= batch["ye"].to(device)
+	ya 				= batch["ya"].to(device)
+
+	return video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya
+
 def train_epoch(model, optimizer, train_dataloader, device, params):
 	model.train()
 	train_loss 		= 0.0
 	num_samples 	= 0
 
 	for i, batch in enumerate(train_dataloader):
-		video_features 	= batch["video_features"].to(device)
-		video_mask 		= batch["video_mask"].to(device)
-		query_features 	= batch["query_features"].to(device)
-		query_mask 		= batch["query_mask"].to(device)
-		length_mask 	= batch["length_mask"].to(device)
-		moment_mask 	= batch["moment_mask"].to(device)
-		sm 				= batch["sm"].to(device)
-		ym 				= batch["ym"].to(device)
-		ss 				= batch["ss"].to(device)
-		ys 				= batch["ys"].to(device)
-		se 				= batch["se"].to(device)
-		ye 				= batch["ye"].to(device)
-		ya 				= batch["ya"].to(device)
+		video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya = get_batch_entries(batch, device)
 		batch_size 		= video_features.shape[0]
 
 		optimizer.zero_grad()
@@ -124,7 +139,7 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
-		train_loss 	   += loss.item()
+		train_loss 	   += loss.item()*batch_size
 		# CHECK - COMPUTE IOU AS ACCURACY HERE?
 
 		loss.backward()
@@ -136,39 +151,51 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 
 	return train_loss
 
-def eval_epoch(model, eval_dataloader, device, params):
+def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
 	model.eval()
 	eval_loss 		= 0.0
+	iou_metrics 	= defaultdict(lambda: 0.0)
 	num_samples 	= 0
 
 	for i, batch in enumerate(eval_dataloader):
-		video_features 	= batch["video_features"].to(device)
-		video_mask 		= batch["video_mask"].to(device)
-		query_features 	= batch["query_features"].to(device)
-		query_mask 		= batch["query_mask"].to(device)
-		length_mask 	= batch["length_mask"].to(device)
-		moment_mask 	= batch["moment_mask"].to(device)
-		sm 				= batch["sm"].to(device)
-		ym 				= batch["ym"].to(device)
-		ss 				= batch["ss"].to(device)
-		ys 				= batch["ys"].to(device)
-		se 				= batch["se"].to(device)
-		ye 				= batch["ye"].to(device)
-		ya 				= batch["ya"].to(device)
+		video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya = get_batch_entries(batch, device)
 		batch_size 		= video_features.shape[0]
 
 		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask)
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
-		eval_loss 	   += loss.item()
-		# CHECK - COMPUTE IOU AS ACCURACY HERE?
+		eval_loss 	   += loss.item()*batch_size
+
+		iou_batch 		= compute_ious(pm, ps, pe, moment_mask, sm, n, m)
+		iou_metrics		= {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
 
 		num_samples    += batch_size
 
 	eval_loss /= num_samples
+	iou_metrics		= {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
 
-	return eval_loss
+	return eval_loss, iou_metrics
+
+def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
+	model.eval()
+	iou_metrics = defaultdict(lambda: 0.0)
+	num_samples = 0
+
+	for i, batch in enumerate(test_dataloader):
+		video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, _, _, _, _, _, _ = get_batch_entries(batch, device)
+		batch_size 		= video_features.shape[0]
+
+		pm, ps, pe, _ 	= model(video_features, video_mask, query_features, query_mask, length_mask)
+
+		iou_batch 		= compute_ious(pm, ps, pe, moment_mask, sm, n, m)
+		iou_metrics		= {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
+
+		num_samples    += batch_size
+
+	iou_metrics		= {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
+
+	return iou_metrics
 
 def get_save_paths(params):
 	prefix 			= f'{params["checkpoint_path"]}/{params["experiment"]}_'
@@ -178,19 +205,13 @@ def get_save_paths(params):
 	return model_path, train_stat_path
 
 def get_existing_stats(train_stat_path, start_epoch, params):
-	train_stats = {
-		"epoch": 		[],
-		"train_loss": 	[],
-		"eval_loss":	[],
-		# FIX - ADD OTHER METRICS IF REQUIRED
-	}
+	train_stats = defaultdict(lambda: [])
 
 	if params["resume_training"] and os.path.exists(train_stat_path):
 		existing_stats = json.load(open(train_stat_path, "r"))
 
 		for key, val in existing_stats.items():
-			if key in train_stats:
-				train_stats[key] = val[:start_epoch - 1]
+			train_stats[key] = val[:start_epoch - 1]
 
 	return train_stats
 
@@ -212,14 +233,18 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
 		print(f"Training Epoch - {epoch}")
 		train_loss 	= train_epoch(model, optimizer, train_dataloader, device, params)
 		# HAVE EVAL AFTER A FEW EPOCHS RATHER THAN EVERY EPOCH??
-		eval_loss 	= eval_epoch(model, eval_dataloader, device, params)
+		eval_loss, iou_metrics 	= eval_epoch(model, eval_dataloader, device, params)
 
 		# Print Stats
 		print(f"Training Loss - {train_loss:.4f}, Eval Loss - {eval_loss:.4f}")
+		for k, v in iou_metrics.items():
+			print(f"{k} - {v}")
 		
 		train_stats["epoch"].append(epoch)
 		train_stats["train_loss"].append(train_loss)
 		train_stats["eval_loss"].append(eval_loss)
+		for k, v in iou_metrics.items():
+			train_stats[k].append(v)
 
 		with open(train_stat_path, "w") as f:
 			json.dump(train_stats, f)
@@ -245,12 +270,27 @@ if __name__ == "__main__":
 	device	= torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	params["device"] = device
 
-	train_dataset, eval_dataset 		= get_datasets(params)
-	train_dataloader, eval_dataloader 	= get_dataloaders(params, train_dataset, eval_dataset)
-
 	model 	= get_model(params)
 	model 	= model.to(device)
 
-	train_model(model, train_dataloader, eval_dataloader, device, params)
+	if not params["test"]: # Training
+		train_dataset, eval_dataset 		= get_training_datasets(params)
+		train_dataloader 					= get_dataloader(params, train_dataset, shuffle = True)
+		eval_dataloader						= get_dataloader(params, eval_dataset, shuffle = False)
 
-	# FIX - TEST ACCURACY
+		train_model(model, train_dataloader, eval_dataloader, device, params)
+	else: # Test the model
+		test_dataset 		= get_test_dataset(params)
+		test_dataloader		= get_dataloader(params, test_dataset, shuffle = False)
+
+		# Load state dict of the saved model
+		model_path = f'{params["checkpoint_path"]}/{params["experiment"]}_model.pt'
+		if os.path.exists(model_path):
+			model.load_state_dict(torch.load(f'{params["checkpoint_path"]}/{params["experiment"]}_model.pt')["model"])
+		else:
+			raise Exception(f'No saved model at {model_path}!')
+
+		iou_metrics = test_model(model, test_dataloader, device, params)
+
+		for k, v in iou_metrics.items():
+			print(f"{k} - {v}")
