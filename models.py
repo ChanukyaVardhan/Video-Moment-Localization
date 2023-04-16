@@ -112,9 +112,9 @@ class ProposalGeneration(nn.Module):
 		self.Wc 		= compute_content_matrix(T, L, C).to(self.device)
 		self.avg_pool 	= nn.AvgPool1d(T//L, stride=T//L)
 
-	def forward(self, f):
-		# Wc: (L, L, C, T), f: (B, T, D) -> fc: (B, L, L, C, D)
-		fc = torch.einsum('lmit, btj -> blmij', self.Wc, f)
+	def forward(self, f, moment_mask):
+		# Wc: (L, L, C, T), f: (B, T, D), moment_mask: (B, L, L) -> fc: (B, L, L, C, D)
+		fc = torch.einsum('lmit, btj -> blmij', self.Wc, f) * moment_mask.unsqueeze(-1).unsqueeze(-1)
 		# fc: (B, L, L, C, D) -> fm: (B, L, L, D)
 		fm = torch.mean(fc, dim=3)
 		# f: (B, T, D) -> fb: (B, D, T)
@@ -162,8 +162,12 @@ class BoundaryUnit(nn.Module):
         self.attn_layer = Attention(D)
     
     def forward(self, f_b, f_w, f_s, f_m, query_mask, length_mask):
+        # length_mask: (B, L) -> f_b_mask: (B, L, 1)
+        f_b_mask = length_mask.unsqueeze(-1)
+
         # f_b: (B, L, D), f_w: (B, Nq, D), query_mask: (B, Nq, 1) -> f_baq: (B, L, D)
         f_baq = self.attn_layer(f_b, f_w, f_w, query_mask)
+        f_baq = f_baq * f_b_mask
         # f_b: (B, L, D), f_s: (B, D), f_baq: (B, L, D) -> f_bq: (B, L, D)
         f_bq = f_b*(f_baq + torch.unsqueeze(f_s, 1))
         # f_bq: (B, L, D) -> A_b: (B, L, L) 
@@ -176,9 +180,12 @@ class BoundaryUnit(nn.Module):
         # Make sure moments that are padded don't impact the attention
         A_b = A_b.masked_fill(mask == 0, -1e9)
         A_b = nn.functional.softmax(A_b, dim = -1)
+        # A_b: (B, L, L), f_b_mask: (B, L, 1) -> A_b: (B, L, L)
+        A_b = A_b * f_b_mask
 
         # A_b: (B, L, L), f_b: (B, L, D) -> f_bb: (B, L, D)
         f_bb = torch.matmul(A_b, f_b)
+        f_bb = f_bb * f_b_mask
 
         # f_m: (B, L, L, D), f_s: (B, D) -> g_m: (B, L, L, D)
         g_m = torch.sigmoid(f_m * torch.unsqueeze(torch.unsqueeze(f_s, 1), 2))
@@ -232,30 +239,34 @@ class ContentUnit(nn.Module):
         self.linear_c 		= nn.Linear(dl, D)
         self.attn_layer 	= ContentAttention(dl)
     
-    def forward(self, f_c, f_w, f_s, f_m, query_mask):
-        # f_c: (B, L, L, C, D) -> f_c_hat: (B, L, L, C, dl)
-        f_c_hat = self.linear_c_hat(f_c)
-        # f_w: (B, Nq, D) -> f_w_hat: (B, Nq, dl)
-        f_w_hat = self.linear_w_hat(f_w)
+    def forward(self, f_c, f_w, f_s, f_m, query_mask, moment_mask):
+        # moment_mask: (B, L, L) -> f_c_mask: (B, L, L, 1, 1)
+        f_c_mask = moment_mask.unsqueeze(-1).unsqueeze(-1)
+
+        # f_c: (B, L, L, C, D), moment_mask: (B, L, L) -> f_c_hat: (B, L, L, C, dl)
+        f_c_hat = self.linear_c_hat(f_c) * f_c_mask
+        # f_w: (B, Nq, D), query_mask: (B, Nq, 1) -> f_w_hat: (B, Nq, dl)
+        f_w_hat = self.linear_w_hat(f_w) * query_mask
         # f_s: (B, D) -> f_s_hat: (B, dl)
         f_s_hat = self.linear_s_hat(f_s)
 
         # f_c_hat: (B, L, L, C, dl), f_w_hat: (B, Nq, dl) -> f_caq: (B, L, L, C, dl)
         f_caq = self.attn_layer(f_c_hat, f_w_hat, f_w_hat, query_mask)
+        f_caq = f_caq * f_c_mask
         # f_c: (B, L, L, C, dl), f_s_hat: (B, dl), f_caq: (B, L, L, C, dl) -> f_cq: (B, L, L, C, dl)
         f_cq = f_c_hat*(f_caq + f_s_hat.unsqueeze(1).unsqueeze(2).unsqueeze(3))
         # f_cq: (B, L, L, C, dl) -> A_c: (B, L, L, C, C)
         A_c = torch.matmul(f_cq, torch.transpose(f_cq, 3, 4))/math.sqrt(self.dl)
 
         # A_c: (B, L, L, C, C) -> A_c: (B, L, L, C, C)
-        # CHECK - DO WE NEED A MASK HERE LIKE WE HAD IN THE BOUNDARY UNIT?
         A_c = nn.functional.softmax(A_c, dim = -1)
+        A_c = A_c * f_c_mask
 
         # A_c: (B, L, L, C, C), f_c_hat: (B, L, L, C, dl) -> f_cc_hat: (B, L, L, C, dl)
         f_cc_hat = torch.matmul(A_c, f_c_hat)
 
         # f_cc_hat: (B, L, L, C, dl) -> f_cc: (B, L, L, C, D)
-        f_cc = self.linear_c(f_cc_hat)
+        f_cc = self.linear_c(f_cc_hat) * f_c_mask
 
         # f_m: (B, L, L, D), f_s: (B, D) -> g_m: (B, L, L, D)
         g_m = torch.sigmoid(f_m * f_s.unsqueeze(1).unsqueeze(2))
@@ -274,7 +285,10 @@ class MomentUnit(nn.Module):
 		self.conv_layer_fb = nn.Conv2d(D, D, 1)
 		self.conv_layer_fc = nn.Conv2d(D, D, 1)
 
-	def forward(self, f_c, f_m, f_b):
+	def forward(self, f_c, f_m, f_b, moment_mask):
+		# moment_mask: (B, L, L) -> f_m_mask: (B, L, L, 1)
+		f_m_mask = moment_mask.unsqueeze(-1)
+
 		# f_b: (B, L, D) -> f_b_s: (B, L, 1, D)
 		f_b_s = f_b.unsqueeze(2)
 		# f_b: (B, L, D) -> f_b_e: (B, 1, L, D)
@@ -283,7 +297,9 @@ class MomentUnit(nn.Module):
 		f_c_mean = torch.mean(f_c, 3)
 		# below operations don't change dimensions of the inputs
 		conv_fb = self.conv_layer_fb((f_b_s * f_b_e).permute(0, 3, 1 ,2)).permute(0, 2, 3, 1)
+		conv_fb = conv_fb * f_m_mask
 		conv_fc = self.conv_layer_fc(f_c_mean.permute(0, 3, 1 ,2)).permute(0, 2, 3, 1)
+		conv_fc = conv_fc * f_m_mask
 		return conv_fb + conv_fc + f_m
 
 class SMI(nn.Module):
@@ -298,20 +314,20 @@ class SMI(nn.Module):
 		self.moment_unit = MomentUnit(D)
 		# assuming that the weights across all CUs are shared and lly for others
 
-	def forward(self, f_c, f_m, f_b, f_w, f_s, query_mask, length_mask):
+	def forward(self, f_c, f_m, f_b, f_w, f_s, query_mask, length_mask, moment_mask):
 		# FIX - SHALL WE PARAMETRIZE THE NUMBER OF LAYERS IN SMI?
 		# first layer
-		cu1 = self.content_unit(f_c, f_w, f_s, f_m, query_mask)
+		cu1 = self.content_unit(f_c, f_w, f_s, f_m, query_mask, moment_mask)
 		bu1 = self.boundary_unit(f_b, f_w, f_s, f_m, query_mask, length_mask)
-		mu1 = self.moment_unit(cu1, f_m, bu1)
+		mu1 = self.moment_unit(cu1, f_m, bu1, moment_mask)
 		# second layer
-		cu2 = self.content_unit(cu1, f_w, f_s, mu1, query_mask)
+		cu2 = self.content_unit(cu1, f_w, f_s, mu1, query_mask, moment_mask)
 		bu2 = self.boundary_unit(bu1, f_w, f_s, mu1, query_mask, length_mask)
-		mu2 = self.moment_unit(cu2, mu1, bu2)
+		mu2 = self.moment_unit(cu2, mu1, bu2, moment_mask)
 		# third layer
-		cu3 = self.content_unit(cu2, f_w, f_s, mu2, query_mask)
+		cu3 = self.content_unit(cu2, f_w, f_s, mu2, query_mask, moment_mask)
 		bu3 = self.boundary_unit(bu2, f_w, f_s, mu2, query_mask, length_mask)
-		mu3 = self.moment_unit(cu3, mu2, bu3)
+		mu3 = self.moment_unit(cu3, mu2, bu3, moment_mask)
 		return mu3, bu3
 
 class Localization(nn.Module):
@@ -356,12 +372,12 @@ class SMIN(nn.Module):
 		self.smi 				= SMI(self.D, self.dl)
 		self.localization		= Localization(self.D)
 
-	def forward(self, video_features, video_mask, query_features, query_mask, length_mask):
+	def forward(self, video_features, video_mask, query_features, query_mask, length_mask, moment_mask):
 		f, fs, fw 				= self.backbone(video_features, video_mask, query_features, query_mask)
 
-		fc, fm, fb 				= self.pgm(f)
+		fc, fm, fb 				= self.pgm(f, moment_mask)
 
-		fm_, fb_ 				= self.smi(fc, fm, fb, fw, fs, query_mask, length_mask)
+		fm_, fb_ 				= self.smi(fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
 
 		pm, ps, pe, pa 			= self.localization(fm_, fb_)
 

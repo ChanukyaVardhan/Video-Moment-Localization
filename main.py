@@ -124,9 +124,10 @@ def get_batch_entries(batch, device):
 
 	return video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya
 
-def train_epoch(model, optimizer, train_dataloader, device, params):
+def train_epoch(model, optimizer, train_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
 	model.train()
 	train_loss 		= 0.0
+	iou_metrics 	= defaultdict(lambda: 0.0)
 	num_samples 	= 0
 
 	for i, batch in enumerate(train_dataloader):
@@ -135,12 +136,15 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 
 		optimizer.zero_grad()
 
-		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask)
+		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
 		train_loss 	   += loss.item()*batch_size
 		# CHECK - COMPUTE IOU AS ACCURACY HERE?
+
+		iou_batch 		= compute_ious(pm, ps, pe, moment_mask, sm, n, m)
+		iou_metrics		= {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
 
 		loss.backward()
 		optimizer.step()
@@ -148,8 +152,9 @@ def train_epoch(model, optimizer, train_dataloader, device, params):
 		num_samples    += batch_size
 
 	train_loss /= num_samples
+	iou_metrics		= {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
 
-	return train_loss
+	return train_loss, iou_metrics
 
 def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
 	model.eval()
@@ -161,7 +166,7 @@ def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
 		video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya = get_batch_entries(batch, device)
 		batch_size 		= video_features.shape[0]
 
-		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask)
+		pm, ps, pe, pa 	= model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
 
 		loss 			= loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask)
 
@@ -186,7 +191,7 @@ def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
 		video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, _, _, _, _, _, _ = get_batch_entries(batch, device)
 		batch_size 		= video_features.shape[0]
 
-		pm, ps, pe, _ 	= model(video_features, video_mask, query_features, query_mask, length_mask)
+		pm, ps, pe, _ 	= model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
 
 		iou_batch 		= compute_ious(pm, ps, pe, moment_mask, sm, n, m)
 		iou_metrics		= {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
@@ -231,20 +236,24 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
 
 	for epoch in range(start_epoch, params["num_epochs"] + 1):
 		print(f"Training Epoch - {epoch}")
-		train_loss 	= train_epoch(model, optimizer, train_dataloader, device, params)
+		train_loss, train_iou_metrics	= train_epoch(model, optimizer, train_dataloader, device, params)
 		# HAVE EVAL AFTER A FEW EPOCHS RATHER THAN EVERY EPOCH??
-		eval_loss, iou_metrics 	= eval_epoch(model, eval_dataloader, device, params)
+		eval_loss, eval_iou_metrics 	= eval_epoch(model, eval_dataloader, device, params)
 
 		# Print Stats
 		print(f"Training Loss - {train_loss:.4f}, Eval Loss - {eval_loss:.4f}")
-		for k, v in iou_metrics.items():
-			print(f"{k} - {v}")
+		for k, v in train_iou_metrics.items():
+			print(f"train_{k} - {v}")
+		for k, v in eval_iou_metrics.items():
+			print(f"eval_{k} - {v}")
 		
 		train_stats["epoch"].append(epoch)
 		train_stats["train_loss"].append(train_loss)
 		train_stats["eval_loss"].append(eval_loss)
-		for k, v in iou_metrics.items():
-			train_stats[k].append(v)
+		for k, v in train_iou_metrics.items():
+			train_stats[f"train_{k}"].append(v)
+		for k, v in eval_iou_metrics.items():
+			train_stats[f"eval_{k}"].append(v)
 
 		with open(train_stat_path, "w") as f:
 			json.dump(train_stats, f)

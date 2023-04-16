@@ -12,7 +12,7 @@ from models import *
 data = CharadesSTA()
 train_dataloader = DataLoader(data, batch_size = 64, shuffle = True, collate_fn = data.collate_fn)
 batch = next(iter(train_dataloader))
-video_features, query_features, video_mask, query_mask, length_mask = batch['video_features'], batch['query_features'], batch['video_mask'], batch['query_mask'], batch['length_mask']
+video_features, query_features, video_mask, query_mask, length_mask, moment_mask = batch['video_features'], batch['query_features'], batch['video_mask'], batch['query_mask'], batch['length_mask'], batch['moment_mask']
 start_pos, end_pos = batch['start_pos'], batch['end_pos']
 
 #model - forward pass
@@ -26,7 +26,7 @@ print(backbone_out[2].shape) #[64,13,512] == fw word wise
 f, fs, fw = backbone_out
 #Proposal Generation 
 ProposalGeneration = ProposalGeneration()
-proposal_out = ProposalGeneration(f)
+proposal_out = ProposalGeneration(f, moment_mask)
 fc, fm, fb = proposal_out
 print('printing proposal output shapes fc, fm, fb')
 print(fc.shape) #([64, 16, 16, 4, 512]) #N, L, L, C, D
@@ -40,7 +40,7 @@ C = 4
 L = 16
 #Content Unit
 ContentUnit = ContentUnit(D, dl)
-cu = ContentUnit(fc, fw, fs, fm, query_mask)
+cu = ContentUnit(fc, fw, fs, fm, query_mask, moment_mask)
 print('content unit output shape')
 print(cu.shape) #[64, 16, 16, 4, 512] #N, L, L, C, D == fc shape
 #Boundary Unit
@@ -50,12 +50,12 @@ print('boundary unit output shape')
 print(bu.shape) #[64, 16, 512] #N, L, D == fb shape
 #Moment Unit
 myMomentUnit = MomentUnit(D)
-mu = myMomentUnit(fc, fm, fb)
+mu = myMomentUnit(fc, fm, fb, moment_mask)
 print('moment unit output shape')
 print(mu.shape)
 #SMI
 SMI = SMI(D, dl)
-mu3, bu3 = SMI(fc, fm, fb, fw, fs, query_mask, length_mask)
+mu3, bu3 = SMI(fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
 print('smi layer output shape mu3 and bu3')
 print(mu3.shape)
 print(bu3.shape)
@@ -79,7 +79,7 @@ input_video_dim = 1024
 max_query_length = 13
 lstm_hidden_size = 256
 smin = SMIN(T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size)
-pm, ps, pe, pa = smin(video_features, video_mask, query_features, query_mask, length_mask)
+pm, ps, pe, pa = smin(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
 print('Localization layer output shape pm, ps, pe, pa')
 print(pm.shape)
 print(ps.shape)
