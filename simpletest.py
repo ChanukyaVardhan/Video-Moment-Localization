@@ -61,7 +61,7 @@ print(mu3.shape)
 print(bu3.shape)
 #Localization
 Loc = Localization(D)
-pm, ps, pe, pa = Loc(mu3, bu3)
+pm, ps, pe, pa = Loc(mu3, bu3, length_mask, moment_mask)
 print('Localization layer output shape pm, ps, pe, pa')
 print(pm.shape)
 print(ps.shape)

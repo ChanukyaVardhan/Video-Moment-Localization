@@ -341,15 +341,15 @@ class Localization(nn.Module):
 		self.conv_layer_pa = nn.Conv1d(D, 1, 1)
 		self.sigmoid = nn.Sigmoid()
 
-	def forward(self, f_m, f_b):
-		# f_m: (B, L, L, D) -> p_m: (B, L, L)
-		p_m = self.sigmoid(self.conv_layer_pm(f_m.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)).squeeze(3)
-		# f_b: (B, L, D) -> p_s: (B, L)
-		p_s = self.sigmoid(self.conv_layer_ps(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
-		# f_b: (B, L, D) -> p_e: (B, L)
-		p_e = self.sigmoid(self.conv_layer_pe(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
-		# f_b: (B, L, D) -> p_a: (B, L)
-		p_a = self.sigmoid(self.conv_layer_pa(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2)
+	def forward(self, f_m, f_b, length_mask, moment_mask):
+		# f_m: (B, L, L, D), moment_mask: (B, L, L) -> p_m: (B, L, L)
+		p_m = self.sigmoid(self.conv_layer_pm(f_m.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)).squeeze(3) * moment_mask
+		# f_b: (B, L, D), length_mask: (B, L) -> p_s: (B, L)
+		p_s = self.sigmoid(self.conv_layer_ps(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
+		# f_b: (B, L, D), length_mask: (B, L) -> p_e: (B, L)
+		p_e = self.sigmoid(self.conv_layer_pe(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
+		# f_b: (B, L, D), length_mask: (B, L) -> p_a: (B, L)
+		p_a = self.sigmoid(self.conv_layer_pa(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
 		return p_m, p_s, p_e, p_a
 
 class SMIN(nn.Module):
@@ -379,7 +379,7 @@ class SMIN(nn.Module):
 
 		fm_, fb_ 				= self.smi(fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
 
-		pm, ps, pe, pa 			= self.localization(fm_, fb_)
+		pm, ps, pe, pa 			= self.localization(fm_, fb_, length_mask, moment_mask)
 
 		return pm, ps, pe, pa
 
