@@ -320,15 +320,18 @@ class SMI(nn.Module):
 		cu1 = self.content_unit(f_c, f_w, f_s, f_m, query_mask, moment_mask)
 		bu1 = self.boundary_unit(f_b, f_w, f_s, f_m, query_mask, length_mask)
 		mu1 = self.moment_unit(cu1, f_m, bu1, moment_mask)
+
+		return cu1, mu1, bu1
+
 		# second layer
-		cu2 = self.content_unit(cu1, f_w, f_s, mu1, query_mask, moment_mask)
-		bu2 = self.boundary_unit(bu1, f_w, f_s, mu1, query_mask, length_mask)
-		mu2 = self.moment_unit(cu2, mu1, bu2, moment_mask)
-		# third layer
-		cu3 = self.content_unit(cu2, f_w, f_s, mu2, query_mask, moment_mask)
-		bu3 = self.boundary_unit(bu2, f_w, f_s, mu2, query_mask, length_mask)
-		mu3 = self.moment_unit(cu3, mu2, bu3, moment_mask)
-		return mu3, bu3
+		# cu2 = self.content_unit(cu1, f_w, f_s, mu1, query_mask, moment_mask)
+		# bu2 = self.boundary_unit(bu1, f_w, f_s, mu1, query_mask, length_mask)
+		# mu2 = self.moment_unit(cu2, mu1, bu2, moment_mask)
+		# # third layer
+		# cu3 = self.content_unit(cu2, f_w, f_s, mu2, query_mask, moment_mask)
+		# bu3 = self.boundary_unit(bu2, f_w, f_s, mu2, query_mask, length_mask)
+		# mu3 = self.moment_unit(cu3, mu2, bu3, moment_mask)
+		# return mu3, bu3
 
 class Localization(nn.Module):
 
@@ -354,7 +357,7 @@ class Localization(nn.Module):
 
 class SMIN(nn.Module):
 
-	def __init__(self, T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size, device = 'cpu'):
+	def __init__(self, T, L, C, D, dl, num_smi_layers, input_video_dim, max_query_length, lstm_hidden_size, device = 'cpu'):
 		super(SMIN, self).__init__()
 
 		self.T 					= T
@@ -362,6 +365,7 @@ class SMIN(nn.Module):
 		self.C 					= C
 		self.D 					= D
 		self.dl 				= dl
+		self.num_smi_layers 	= num_smi_layers
 		self.input_video_dim	= input_video_dim
 		self.max_query_length 	= max_query_length
 		self.lstm_hidden_size	= lstm_hidden_size
@@ -369,7 +373,7 @@ class SMIN(nn.Module):
 
 		self.backbone 			= Backbone(self.T, self.D, self.input_video_dim, self.max_query_length, self.lstm_hidden_size, self.device)
 		self.pgm 				= ProposalGeneration(self.T, self.L, self.C, self.device)
-		self.smi 				= SMI(self.D, self.dl)
+		self.smis 				= nn.ModuleList([SMI(self.D, self.dl) for i in range(self.num_smi_layers)])
 		self.localization		= Localization(self.D)
 
 	def forward(self, video_features, video_mask, query_features, query_mask, length_mask, moment_mask):
@@ -377,9 +381,10 @@ class SMIN(nn.Module):
 
 		fc, fm, fb 				= self.pgm(f, moment_mask)
 
-		fm_, fb_ 				= self.smi(fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
+		for i in range(self.num_smi_layers):
+			fc, fm, fb 			= self.smis[i](fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
 
-		pm, ps, pe, pa 			= self.localization(fm_, fb_, length_mask, moment_mask)
+		pm, ps, pe, pa 			= self.localization(fm, fb, length_mask, moment_mask)
 
 		return pm, ps, pe, pa
 

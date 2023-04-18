@@ -26,6 +26,6 @@ def compute_ious(pm, ps, pe, moment_mask, sm, n = [1, 5], m = [0.1, 0.3, 0.5, 0.
 
 	for n_ in n:
 		for m_ in m:
-			metrics[f"R@{n_}, IoU={m_}"] += torch.sum((top_ious[:n_] > m_).sum(dim = 1) > 0).item()
+			metrics[f"R@{n_}, IoU={m_}"] += torch.sum((top_ious[:, :n_] > m_).sum(dim = 1) > 0).item()
 
 	return metrics

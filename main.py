@@ -68,7 +68,7 @@ def get_dataloader(params, dataset, shuffle = False):
 def get_model(params):
 	model = None
 	if params["model"] == "SMIN":
-		model = SMIN(params["T"], params["L"], params["C"], params["d"], params["dl"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"], params["device"])
+		model = SMIN(params["T"], params["L"], params["C"], params["d"], params["dl"], params["num_smi_layers"], params["input_video_dim"], params["max_query_length"], params["lstm_hidden_size"], params["device"])
 	else:
 		raise Exception(f'Model {params["model"]} is not a valid model!')
 
@@ -79,7 +79,7 @@ def get_optimizer(model, params):
 	if params["optimizer"] == "Adam":
 		optimizer = torch.optim.Adam(
 			model.parameters(),
-			lr = params["lr"]
+			lr = params["lr"],
 		)
 	else:
 		raise Exception(f'Optimizer {params["optimizer"]} is not supported!')

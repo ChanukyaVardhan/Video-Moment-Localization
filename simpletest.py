@@ -55,8 +55,9 @@ print('moment unit output shape')
 print(mu.shape)
 #SMI
 SMI = SMI(D, dl)
-mu3, bu3 = SMI(fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
-print('smi layer output shape mu3 and bu3')
+cu3, mu3, bu3 = SMI(fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
+print('smi layer output shape cu3, mu3 and bu3')
+print(cu3.shape)
 print(mu3.shape)
 print(bu3.shape)
 #Localization
@@ -75,10 +76,11 @@ print(pa[0])
 
 # Whole Model
 T = 64
+num_smi_layers = 3
 input_video_dim = 1024
 max_query_length = 13
 lstm_hidden_size = 256
-smin = SMIN(T, L, C, D, dl, input_video_dim, max_query_length, lstm_hidden_size)
+smin = SMIN(T, L, C, D, dl, num_smi_layers, input_video_dim, max_query_length, lstm_hidden_size)
 pm, ps, pe, pa = smin(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
 print('Localization layer output shape pm, ps, pe, pa')
 print(pm.shape)

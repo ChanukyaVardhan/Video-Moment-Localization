@@ -10,7 +10,7 @@ input_video_dim:    1024            # I3D features dimension
 dl:                 128             # Feature dimensions for Content-word interactions
 max_query_length:   13              # Max length of the query
 lstm_hidden_size:   256             # lstm hidden size
-num_layers:         3               # Number of Structured Multi-Level Interactions
+num_smi_layers:     3               # Number of Structured Multi-Level Interactions
 
 # data
 dataset:            "charadessta"   # Dataset name
