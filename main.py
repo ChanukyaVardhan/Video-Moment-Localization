@@ -86,18 +86,26 @@ def get_optimizer(model, params):
 
 	return optimizer
 
-def bce_loss(p, y, s, mask):
-	assert mask.sum().item() != 0
-	loss = CustomBCELoss()(p, y, s) * mask
-	if mask.dim() == 3: # L_m case
-		loss = torch.sum(loss, dim = (1, 2)) / torch.sum(mask, dim = (1, 2))
-	else: # L_s, L_e, L_a cases
-		loss = torch.sum(loss, dim = 1) / torch.sum(mask, dim = 1)
+def bce_loss(p, y, s, mask): 
+        # p: (B, L, L), y: (B, L, L), mask: s: (B, L, L) -> loss: (B, L, L)
+        if s is not None:
+                loss_layer_1 = torch.nn.BCELoss(weight=s*y.long(), reduction = None)
+                loss_layer_2 = torch.nn.BCELoss(weight=(1-s)*(1-y.long()), reduction = None)
+                loss = loss_layer_1(p, y.float())+ loss_layer_2(1-p, 1-y.float())
+                loss = loss * mask
+        else:
+                loss_layer = torch.nn.BCELoss(reduction = None)
+                loss = loss_layer(p, y.float()) * mask
 
-	# B x 1 -> 1
-	loss = torch.mean(loss)
+        if mask.dim() == 3: # L_m case
+                loss = torch.sum(loss, dim = (1, 2)) / torch.sum(mask, dim = (1, 2))
+        else: # L_s, L_e, L_a cases
+                loss = torch.sum(loss, dim = 1) / torch.sum(mask, dim = 1)
 
-	return loss
+        # B x 1 -> 1
+        loss = torch.mean(loss)
+
+        return loss
 
 def loss_fn(pm, ym, sm, moment_mask, ps, ys, ss, pe, ye, se, pa, ya, length_mask):
 	L_m = bce_loss(pm, ym, sm, moment_mask)
