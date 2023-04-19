@@ -10,7 +10,7 @@ input_video_dim:    500             # C3D features dimension after PCA
 dl:                 128             # Feature dimensions for Content-word interactions
 max_query_length:   20              # Max length of the query
 lstm_hidden_size:   256             # lstm hidden size
-num_layers:         3               # Number of Structured Multi-Level Interactions
+num_smi_layers:     3               # Number of Structured Multi-Level Interactions
 
 # data
 dataset:            "activitynet"   # Dataset name
