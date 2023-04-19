@@ -312,26 +312,14 @@ class SMI(nn.Module):
 		self.content_unit = ContentUnit(D, dl)
 		self.boundary_unit = BoundaryUnit(D)
 		self.moment_unit = MomentUnit(D)
-		# assuming that the weights across all CUs are shared and lly for others
 
 	def forward(self, f_c, f_m, f_b, f_w, f_s, query_mask, length_mask, moment_mask):
-		# FIX - SHALL WE PARAMETRIZE THE NUMBER OF LAYERS IN SMI?
 		# first layer
 		cu1 = self.content_unit(f_c, f_w, f_s, f_m, query_mask, moment_mask)
 		bu1 = self.boundary_unit(f_b, f_w, f_s, f_m, query_mask, length_mask)
 		mu1 = self.moment_unit(cu1, f_m, bu1, moment_mask)
 
 		return cu1, mu1, bu1
-
-		# second layer
-		# cu2 = self.content_unit(cu1, f_w, f_s, mu1, query_mask, moment_mask)
-		# bu2 = self.boundary_unit(bu1, f_w, f_s, mu1, query_mask, length_mask)
-		# mu2 = self.moment_unit(cu2, mu1, bu2, moment_mask)
-		# # third layer
-		# cu3 = self.content_unit(cu2, f_w, f_s, mu2, query_mask, moment_mask)
-		# bu3 = self.boundary_unit(bu2, f_w, f_s, mu2, query_mask, length_mask)
-		# mu3 = self.moment_unit(cu3, mu2, bu3, moment_mask)
-		# return mu3, bu3
 
 class Localization(nn.Module):
 
@@ -387,18 +375,3 @@ class SMIN(nn.Module):
 		pm, ps, pe, pa 			= self.localization(fm, fb, length_mask, moment_mask)
 
 		return pm, ps, pe, pa
-
-class CustomBCELoss(nn.Module):
-
-	def __init__(self):
-		super(CustomBCELoss, self).__init__()
-
-	def forward(self, p, y, s):
-		if s is not None:
-			loss = -(y * s * torch.maximum(torch.log(p), torch.full((), -100)) + \
-					(~y) * (1 - s) * torch.maximum(torch.log(1 - p), torch.full((), -100)))
-		else:
-			loss = -(y * torch.maximum(torch.log(p), torch.full((), -100)) + \
-					(~y) * torch.maximum(torch.log(1 - p), torch.full((), -100)))
-
-		return loss
