@@ -302,6 +302,43 @@ class MomentUnit(nn.Module):
 		conv_fc = conv_fc * f_m_mask
 		return conv_fb + conv_fc + f_m
 
+class CGAEncoder(nn.Module):
+    def __init__(self, Nq, D):
+        super(CGAEncoder, self).__init__()
+        self.D, self.attn_weights = D, None
+        self.W_q = nn.Linear(D, D)
+        self.W_k = nn.Linear(D, D)
+        self.W_v = nn.Linear(D, D)
+    
+    # query: (B, Nq, D), query_mask: (B, Nq), key: (B, L, L, D), value: (B, L, L, D), kv_mask: (B, L, L)
+    def forward(self, query, query_mask, key, value, kv_mask):
+        B, L, D =  key.shape[0], key.shape[1], key.shape[3]
+        # key, value: (B, L, L, D) -> key, value: (B, L*L, D)
+        key, value = torch.reshape(key, (B, L*L, D)), torch.reshape(value, (B, L*L, D))
+        query, key, value  = self.W_q(query), self.W_k(key), self.W_v(value) 
+        # query: (B, Nq, D), key, value: (B, L*L, D) -> attn_weights: (B, Nq, L*L)
+        if query.dim() == 2:
+            query = query.unsqueeze(1)
+        attn_weights = torch.matmul(query, torch.transpose(key, 2, 1))/math.sqrt(D)
+        # kv_mask: (B, L, L) -> kv_mask: (B, 1, L*L)
+        mask = kv_mask.reshape(B, L*L).unsqueeze(1)
+        if query_mask is not None:
+            # query_mask: (B, Nq) -> query_mask: (B, Nq, 1)
+            query_mask = query_mask.float().unsqueeze(2)
+            # query_mask: (B, Nq, 1), kv_mask: (B, 1, L*L) -> mask: (B, Nq, L*L)
+            mask = mask*query_mask
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = attn_weights * mask
+        print(attn_weights.shape, mask.shape)
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = attn_weights.masked_fill(mask == 0, -1e9)
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        # attn_weights: (B, Nq, L*L), value: (B, L*L, D) -> attn_out: (B, Nq, D)
+        attn_out = torch.matmul(attn_weights, value)
+        self.attn_weights = attn_weights
+        return attn_out
+
 class SMI(nn.Module):
 
 	def __init__(self, D, dl):
@@ -312,14 +349,19 @@ class SMI(nn.Module):
 		self.content_unit = ContentUnit(D, dl)
 		self.boundary_unit = BoundaryUnit(D)
 		self.moment_unit = MomentUnit(D)
+		self.cga_encoder = CGAEncoder(D)
 
 	def forward(self, f_c, f_m, f_b, f_w, f_s, query_mask, length_mask, moment_mask):
 		# first layer
 		cu1 = self.content_unit(f_c, f_w, f_s, f_m, query_mask, moment_mask)
 		bu1 = self.boundary_unit(f_b, f_w, f_s, f_m, query_mask, length_mask)
 		mu1 = self.moment_unit(cu1, f_m, bu1, moment_mask)
+		
+		fw = self.cga_encoder(f_w, query_mask, mu1, mu1, moment_mask)
+		fs = self.cga_encoder(f_s, None, mu1, mu1, moment_mask)
+		fs = fs.squeeze(1)
 
-		return cu1, mu1, bu1
+		return cu1, mu1, bu1, fw, fs
 
 class Localization(nn.Module):
 
@@ -370,7 +412,7 @@ class SMIN(nn.Module):
 		fc, fm, fb 				= self.pgm(f, moment_mask)
 
 		for i in range(self.num_smi_layers):
-			fc, fm, fb 			= self.smis[i](fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
+			fc, fm, fb, fw, fs			= self.smis[i](fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
 
 		pm, ps, pe, pa 			= self.localization(fm, fb, length_mask, moment_mask)
 
