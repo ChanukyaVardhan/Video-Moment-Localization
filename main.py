@@ -15,8 +15,9 @@ def get_parameters():
         parser.add_argument("--config_path", default = "config/charadessta.yml", help = "Path to config file.")
         parser.add_argument("--num_epochs",  default = 0, type = int, help = "Number of epochs to override value in the config.")
         parser.add_argument("--test",            default = False, action = "store_true", help = "Test the saved model for this config.")
-        parser.add_argument("--fian", default = False, type = bool, help ="Integrate Fian model")
+        parser.add_argument("--fian", default = False, action = "store_true", help ="Integrate Fian model")
         parser.add_argument("--num_heads",default = 1, type = int, help = "Number of attention heads") 
+        parser.add_argument("--test_model_path", default = "./checkpoints/charadessta_model_7.pt", help = "Path to saved model.")
         args    = parser.parse_args()
 
         with open(args.config_path, "r") as f:
@@ -25,6 +26,7 @@ def get_parameters():
         params["test"]           = args.test
         params["fian"]           = args.fian
         params["num_heads"]      = args.num_heads
+        params["test_model_path"] = args.test_model_path
 
         if args.num_epochs != 0:
                 params["num_epochs"] = args.num_epochs
@@ -215,8 +217,13 @@ def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
 
         return iou_metrics
 
-def get_save_paths(params):
+def get_prefix(params):
         prefix                  = f'{params["checkpoint_path"]}/{params["experiment"]}_'
+
+        return prefix
+
+def get_save_paths(params):
+        prefix                  = get_prefix(params)
         model_path              = f'{prefix}model.pt'
         train_stat_path = f'{prefix}stats.json'
 
@@ -272,11 +279,14 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
                         json.dump(train_stats, f)
 
                 # FIX - SAVE MODEL AND OPTIMIZER ON SOME CONDITION, ALSO SAVE THE CONDITION IN THE PATH AS WELL TO RELOAD FROM THAT CONDITION
+                # SAVING EVERY EPOCH
+                current_epoch_path = get_prefix(params) + f"model_{epoch}.pt"
                 torch.save({
                         "epoch":                epoch,
                         "model":                model.state_dict(),
                         "optimizer":    optimizer.state_dict()
-                }, model_path)
+                # }, model_path) # -> best path
+                }, current_epoch_path) # -> save every epoch
 
         return model
 
@@ -306,9 +316,10 @@ if __name__ == "__main__":
                 test_dataloader         = get_dataloader(params, test_dataset, shuffle = False)
 
                 # Load state dict of the saved model
-                model_path = f'{params["checkpoint_path"]}/{params["experiment"]}_model.pt'
+                # model_path = f'{params["checkpoint_path"]}/{params["experiment"]}_model.pt'
+                model_path = params["test_model_path"]
                 if os.path.exists(model_path):
-                        model.load_state_dict(torch.load(f'{params["checkpoint_path"]}/{params["experiment"]}_model.pt')["model"])
+                        model.load_state_dict(torch.load(model_path)["model"])
                 else:
                         raise Exception(f'No saved model at {model_path}!')
 
