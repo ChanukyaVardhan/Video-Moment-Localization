@@ -1,17 +1,20 @@
-from torch.utils.data import Dataset, DataLoader
-from utils import get_tokens
-
 import csv
-import h5py
 import json
 import math
-import numpy as np
 import os
+import pdb
 import time
+
+import h5py
+import numpy as np
 import torch
-import torchtext
 import torch.nn as nn
 import torch.nn.functional as F
+import torchtext
+from torch.utils.data import DataLoader, Dataset
+
+from utils import get_tokens
+
 
 class AbstractDataset(Dataset):
 
@@ -93,17 +96,23 @@ class AbstractDataset(Dataset):
 		NotImplementedError(f'load video features not implemented!')
 
 	def get_iou(self, gt_spos, gt_epos, duration):
+		#pdb.set_trace()
 		s_times = torch.arange(0, self.L).float() * duration / self.L
 		e_times = torch.arange(1, self.L + 1).float() * duration / self.L
-
+		# print('printing in get_iou of dataloader')
+		# print(gt_spos)
+		# print(gt_epos)
+		# print(s_times.shape)		
 		preds 	= torch.stack([
 					s_times.repeat_interleave(self.L),
 					e_times.repeat(self.L)], dim = 1)
 		gts 	= torch.tensor([gt_spos, gt_epos]).unsqueeze(0)
-
+		# print(preds.shape)
+		# print(gts.shape)
 		inter 	= torch.max(torch.tensor(0.0), torch.min(preds[:, 1], gts[:, 1]) - torch.max(preds[:, 0], gts[:, 0]))
 		union 	= torch.max(torch.tensor(0.0), torch.max(preds[:, 1], gts[:, 1]) - torch.min(preds[:, 0], gts[:, 0]))
-
+		# print(inter.shape)
+		# print(union.shape)
 		ious 	= inter / union
 		ious 	= ious.reshape(self.L, self.L)
 

@@ -1,14 +1,15 @@
+import argparse
+import json
+import os
 from collections import defaultdict
-from dataset import CharadesSTA, ActivityNet, TACoS
+
+import torch
+import yaml
+from dataset import ActivityNet, CharadesSTA, TACoS
 from models import SMIN
 from torch.utils.data import DataLoader
 from utils import compute_ious
 
-import argparse
-import json
-import os
-import torch
-import yaml
 
 def get_parameters():
         parser  = argparse.ArgumentParser()
@@ -16,6 +17,8 @@ def get_parameters():
         parser.add_argument("--num_epochs",  default = 0, type = int, help = "Number of epochs to override value in the config.")
         parser.add_argument("--test",            default = False, action = "store_true", help = "Test the saved model for this config.")
         parser.add_argument("--fian", default = False, action = "store_true", help ="Integrate Fian model")
+        parser.add_argument("--nms", default = False, action = "store_true", help ="If Evaluation should use nms")
+        parser.add_argument("--nmsthreshold", default = 0.3, type = float, help ="threshold for nms")
         parser.add_argument("--num_heads",default = 1, type = int, help = "Number of attention heads") 
         parser.add_argument("--test_model_path", default = "./checkpoints/charadessta_model_7.pt", help = "Path to saved model.")
         parser.add_argument("--experiment", default = "", help = "checkpoint names.")
@@ -26,15 +29,17 @@ def get_parameters():
         params["experiment"] = os.path.splitext(os.path.basename(args.config_path))[0]
         params["test"]           = args.test
         params["fian"]           = args.fian
+        params["nms"]            = args.nms
+        if params["nms"]:
+            print('Applying nms')
+        params["nmsthreshold"]   = args.nmsthreshold
         params["num_heads"]      = args.num_heads
         params["test_model_path"] = args.test_model_path
 
         if args.num_epochs != 0:
                 params["num_epochs"] = args.num_epochs
-
         if args.experiment != "":
                 params["experiment"] = args.experiment
-
         return params
 
 def get_dataset(params):
@@ -100,8 +105,10 @@ def get_optimizer(model, params):
 def bce_loss(p, y, s, mask): 
     # p: (B, L, L), y: (B, L, L), mask: s: (B, L, L) -> loss: (B, L, L)
     if s is not None:
-        loss_layer_1 = torch.nn.BCELoss(weight=s*y.long(), reduction = 'none')
-        loss_layer_2 = torch.nn.BCELoss(weight=(1-s)*(1-y.long()), reduction ='none')
+        #loss_layer_1 = torch.nn.BCELoss(weight=s*y.long(), reduction = 'none')
+        #loss_layer_2 = torch.nn.BCELoss(weight=(1-s)*(1-y.long()), reduction ='none')
+        loss_layer_1 = torch.nn.BCELoss(weight=s, reduction = 'none')
+        loss_layer_2 = torch.nn.BCELoss(weight=(1-s), reduction ='none')        
         loss = loss_layer_1(p, y.float())+ loss_layer_2(1-p, 1-y.float())
         loss = loss * mask
     else:
@@ -220,11 +227,15 @@ def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
                 batch_size              = video_features.shape[0]
 
                 pm, ps, pe, _   = model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
-
-                iou_batch, top_indices, top_ious = compute_ious(pm, ps, pe, moment_mask, sm, n, m, return_top_results = True)
+                #extract indexs of pm, ps, pe
+                
+                iou_batch, top_indices, top_ious = compute_ious(pm, ps, pe, moment_mask, sm, n, m, device, params["nms"], params["nmsthreshold"], return_top_results = True)
+                #boxes dimension: [N,4], scores: [N]
+                #torchvision.ops.nms(boxes: Tensor, scores: Tensor, iou_threshold: float) 
                 iou_metrics             = {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
 
                 num_samples    += batch_size
+                #print(iou_metrics)
 
                 for j in range(len(video_ids)):
                         r_gst = times[j][0]
@@ -256,6 +267,7 @@ def get_existing_stats(train_stat_path, start_epoch, params):
         train_stats = defaultdict(lambda: [])
 
         if params["resume_training"] and os.path.exists(train_stat_path):
+                print('entering this getexistingstats?')
                 existing_stats = json.load(open(train_stat_path, "r"))
 
                 for key, val in existing_stats.items():
@@ -270,11 +282,12 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
         optimizer       = get_optimizer(model, params)
         model_path, train_stat_path = get_save_paths(params)
         if params["resume_training"] and os.path.exists(model_path):
+                print('entering this initial training point?')
                 model_details   = torch.load(model_path)
                 start_epoch             = model_details["epoch"] + 1 # Start from the epoch after the checkpoint
                 model.load_state_dict(model_details["model"])
                 optimizer.load_state_dict(model_details["optimizer"])
-
+        
         train_stats = get_existing_stats(train_stat_path, start_epoch, params)
 
         for epoch in range(start_epoch, params["num_epochs"] + 1):
@@ -315,7 +328,6 @@ def train_model(model, train_dataloader, eval_dataloader, device, params):
 
 if __name__ == "__main__":
         params = get_parameters()
-
         # Set seed
         torch.manual_seed(params["seed"])
         torch.cuda.manual_seed_all(params["seed"])
