@@ -140,8 +140,11 @@ def get_batch_entries(batch, device):
         se                              = batch["se"].to(device)
         ye                              = batch["ye"].to(device)
         ya                              = batch["ya"].to(device)
+        video_id = batch["video_id"]
+        duration = batch["duration"]
+        times = batch["times"]
 
-        return video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya
+        return video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya, video_id, times, duration
 
 def train_epoch(model, optimizer, train_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
         model.train()
@@ -150,7 +153,7 @@ def train_epoch(model, optimizer, train_dataloader, device, params, n = [1, 5], 
         num_samples     = 0
 
         for i, batch in enumerate(train_dataloader):
-                video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya = get_batch_entries(batch, device)
+                video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya, _, _, _ = get_batch_entries(batch, device)
                 batch_size              = video_features.shape[0]
 
                 optimizer.zero_grad()
@@ -184,7 +187,7 @@ def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
         num_samples     = 0
 
         for i, batch in enumerate(eval_dataloader):
-                video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya = get_batch_entries(batch, device)
+                video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, ym, ss, ys, se, ye, ya, _, _, _ = get_batch_entries(batch, device)
                 batch_size              = video_features.shape[0]
 
                 pm, ps, pe, pa  = model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
@@ -210,20 +213,32 @@ def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
         iou_metrics = defaultdict(lambda: 0.0)
         num_samples = 0
 
+        all_results = []
+
         for i, batch in enumerate(test_dataloader):
-                video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, _, _, _, _, _, _ = get_batch_entries(batch, device)
+                video_features, video_mask, query_features, query_mask, length_mask, moment_mask, sm, _, _, _, _, _, _, video_ids, times, durations = get_batch_entries(batch, device)
                 batch_size              = video_features.shape[0]
 
                 pm, ps, pe, _   = model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
 
-                iou_batch               = compute_ious(pm, ps, pe, moment_mask, sm, n, m)
+                iou_batch, top_indices, top_ious = compute_ious(pm, ps, pe, moment_mask, sm, n, m, return_top_results = True)
                 iou_metrics             = {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
 
                 num_samples    += batch_size
 
+                for j in range(len(video_ids)):
+                        r_gst = times[j][0]
+                        r_get = times[j][1]
+                        r_pst = durations[j] * top_indices[j][0].item() / ps.shape[1]
+                        r_pet = durations[j] * top_indices[j][1].item() / ps.shape[1]
+                        r_dur = durations[j]
+                        r_iou = top_ious[j]
+                        # all_results.append(f"{video_ids[j]}; {r_dur}; {r_gst}-{r_get}; {round(r_pst, 2)}-{round(r_pet, 2)}; Iou-{round(r_iou, 2)}")
+                        all_results.append(f"{video_ids[j]} {round(r_iou.item(), 2)} {r_dur} {r_gst}-{r_get} {round(r_pst, 2)}-{round(r_pet, 2)}")
+
         iou_metrics             = {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
 
-        return iou_metrics
+        return iou_metrics, all_results
 
 def get_prefix(params):
         prefix                  = f'{params["checkpoint_path"]}/{params["experiment"]}_'
@@ -331,7 +346,11 @@ if __name__ == "__main__":
                 else:
                         raise Exception(f'No saved model at {model_path}!')
 
-                iou_metrics = test_model(model, test_dataloader, device, params)
+                iou_metrics, all_results = test_model(model, test_dataloader, device, params)
 
                 for k, v in iou_metrics.items():
                         print(f"{k} - {v}")
+
+                with open(f"./logs/{params['experiment']}.txt", 'w') as file:
+                    for string in all_results:
+                        file.write(string + '\n')
