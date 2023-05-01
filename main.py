@@ -5,10 +5,9 @@ from collections import defaultdict
 
 import torch
 import yaml
-from torch.utils.data import DataLoader
-
 from dataset import ActivityNet, CharadesSTA, TACoS
 from models import SMIN
+from torch.utils.data import DataLoader
 from utils import compute_ious
 
 
@@ -21,6 +20,7 @@ def get_parameters():
         parser.add_argument("--nms", default = False, action = "store_true", help ="If Evaluation should use nms")
         parser.add_argument("--num_heads",default = 1, type = int, help = "Number of attention heads") 
         parser.add_argument("--test_model_path", default = "./checkpoints/charadessta_model_7.pt", help = "Path to saved model.")
+        parser.add_argument("--experiment", default = "", help = "checkpoint names.")
         args    = parser.parse_args()
 
         with open(args.config_path, "r") as f:
@@ -33,7 +33,9 @@ def get_parameters():
         params["test_model_path"] = args.test_model_path
 
         if args.num_epochs != 0:
-                params["num_epochs"] = args.num_epochs        
+                params["num_epochs"] = args.num_epochs
+        if args.experiment != "":
+                params["experiment"] = args.experiment
         return params
 
 def get_dataset(params):
@@ -63,10 +65,10 @@ def get_test_dataset(params):
 
         return test_dataset
 
-def get_dataloader(params, dataset, shuffle = False):
+def get_dataloader(params, dataset, shuffle = False, half = False):
         dataloader = DataLoader(
                 dataset,
-                batch_size      = params["batch_size"],
+                batch_size      = params["batch_size"] if not half else params["batch_size"] // 2,
                 shuffle         = shuffle,
                 collate_fn      = dataset.collate_fn,
                 num_workers = params["num_workers"],
@@ -174,6 +176,8 @@ def train_epoch(model, optimizer, train_dataloader, device, params, n = [1, 5], 
         train_loss /= num_samples
         iou_metrics             = {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
 
+        torch.cuda.empty_cache()
+
         return train_loss, iou_metrics
 
 def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
@@ -199,6 +203,8 @@ def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
 
         eval_loss /= num_samples
         iou_metrics             = {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
+
+        torch.cuda.empty_cache()
 
         return eval_loss, iou_metrics
 
@@ -318,7 +324,7 @@ if __name__ == "__main__":
         if not params["test"]: # Training
                 train_dataset, eval_dataset             = get_training_datasets(params)
                 train_dataloader                                        = get_dataloader(params, train_dataset, shuffle = True)
-                eval_dataloader                                         = get_dataloader(params, eval_dataset, shuffle = False)
+                eval_dataloader                                         = get_dataloader(params, eval_dataset, shuffle = False, half = True)
 
                 train_model(model, train_dataloader, eval_dataloader, device, params)
         else: # Test the model
