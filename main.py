@@ -18,9 +18,9 @@ def get_parameters():
         parser.add_argument("--test",            default = False, action = "store_true", help = "Test the saved model for this config.")
         parser.add_argument("--fian", default = False, action = "store_true", help ="Integrate Fian model")
         parser.add_argument("--nms", default = False, action = "store_true", help ="If Evaluation should use nms")
+        parser.add_argument("--nmsthreshold", default = 0.3, type = float, help ="threshold for nms")
         parser.add_argument("--num_heads",default = 1, type = int, help = "Number of attention heads") 
         parser.add_argument("--test_model_path", default = "./checkpoints/charadessta_model_7.pt", help = "Path to saved model.")
-        parser.add_argument("--experiment", default = "", help = "checkpoint names.")
         args    = parser.parse_args()
 
         with open(args.config_path, "r") as f:
@@ -29,13 +29,12 @@ def get_parameters():
         params["test"]           = args.test
         params["fian"]           = args.fian
         params["nms"]            = args.nms
+        params["nmsthreshold"]   = args.nmsthreshold
         params["num_heads"]      = args.num_heads
         params["test_model_path"] = args.test_model_path
 
         if args.num_epochs != 0:
-                params["num_epochs"] = args.num_epochs
-        if args.experiment != "":
-                params["experiment"] = args.experiment
+                params["num_epochs"] = args.num_epochs        
         return params
 
 def get_dataset(params):
@@ -65,10 +64,10 @@ def get_test_dataset(params):
 
         return test_dataset
 
-def get_dataloader(params, dataset, shuffle = False, half = False):
+def get_dataloader(params, dataset, shuffle = False):
         dataloader = DataLoader(
                 dataset,
-                batch_size      = params["batch_size"] if not half else params["batch_size"] // 2,
+                batch_size      = params["batch_size"],
                 shuffle         = shuffle,
                 collate_fn      = dataset.collate_fn,
                 num_workers = params["num_workers"],
@@ -176,8 +175,6 @@ def train_epoch(model, optimizer, train_dataloader, device, params, n = [1, 5], 
         train_loss /= num_samples
         iou_metrics             = {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
 
-        torch.cuda.empty_cache()
-
         return train_loss, iou_metrics
 
 def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
@@ -204,8 +201,6 @@ def eval_epoch(model, eval_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
         eval_loss /= num_samples
         iou_metrics             = {k: iou_metrics[k] / num_samples for k in iou_metrics.keys()}
 
-        torch.cuda.empty_cache()
-
         return eval_loss, iou_metrics
 
 def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7]):
@@ -220,7 +215,7 @@ def test_model(model, test_dataloader, device, params, n = [1, 5], m = [0.1, 0.3
                 pm, ps, pe, _   = model(video_features, video_mask, query_features, query_mask, length_mask, moment_mask)
                 #extract indexs of pm, ps, pe
                 
-                iou_batch               = compute_ious(pm, ps, pe, moment_mask, sm, n, m, device, params["nms"])
+                iou_batch               = compute_ious(pm, ps, pe, moment_mask, sm, n, m, device, params["nms"], params["nmsthreshold"])
                 #boxes dimension: [N,4], scores: [N]
                 #torchvision.ops.nms(boxes: Tensor, scores: Tensor, iou_threshold: float) 
                 iou_metrics             = {k: iou_metrics[k] + iou_batch[k] for k in iou_batch.keys()}
@@ -324,7 +319,7 @@ if __name__ == "__main__":
         if not params["test"]: # Training
                 train_dataset, eval_dataset             = get_training_datasets(params)
                 train_dataloader                                        = get_dataloader(params, train_dataset, shuffle = True)
-                eval_dataloader                                         = get_dataloader(params, eval_dataset, shuffle = False, half = True)
+                eval_dataloader                                         = get_dataloader(params, eval_dataset, shuffle = False)
 
                 train_model(model, train_dataloader, eval_dataloader, device, params)
         else: # Test the model

@@ -50,7 +50,7 @@ def apply_nms(pred_score, pred_indices, threshold, device = 'cpu'):
     return results	    
 
 # Compute the IoU metrics <R@n, IoU=m> for the whole batch
-def compute_ious(pm, ps, pe, moment_mask, sm, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7], device = 'cpu', nms = False):
+def compute_ious(pm, ps, pe, moment_mask, sm, n = [1, 5], m = [0.1, 0.3, 0.5, 0.7], device = 'cpu', nms = False, threshold=0.3):
 	#pdb.set_trace()
 	metrics = defaultdict(lambda: 0.0)	
 	pred_score 		= pm * torch.sqrt(ps.unsqueeze(2)) * torch.sqrt(pe.unsqueeze(1)) #B x L x L	
@@ -69,10 +69,11 @@ def compute_ious(pm, ps, pe, moment_mask, sm, n = [1, 5], m = [0.1, 0.3, 0.5, 0.
 	for n_ in n:
 		for m_ in m:						
 			if nms:
-				top_indices = apply_nms(pred_score, pred_indices, m_, device).to(device) #get them in N, k format			
+				top_indices = apply_nms(pred_score, pred_indices, threshold, device).to(device) #get them in N, k format			
 			else: #even if nms is true, bsically verify if the top_indices above have valid k input just in case even when nms is on # but was not necessary
 				#fallback to previous method of just getting plain topk
-				_, top_indices	= pred_score.topk(k = max(n), dim = 1)				
+				_, top_indices	= pred_score.topk(k = max(n), dim = 1)	
+			#this is where we would need to change if boundary loss is also incorporated				
 			top_ious		= torch.gather(sm.view(sm.shape[0], -1), 1, top_indices) 
 			metrics[f"R@{n_}, IoU={m_}"] += torch.sum((top_ious[:, :n_] > m_).sum(dim = 1) > 0).item()			
 	return metrics
