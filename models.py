@@ -6,126 +6,126 @@ import torch.nn as nn
 
 class VideoEncoder(nn.Module):
 
-	def __init__(self, T = 64, d = 512, input_video_dim = 1024, device = 'cpu'):
-		super(VideoEncoder, self).__init__()
+        def __init__(self, T = 64, d = 512, input_video_dim = 1024, device = 'cpu'):
+                super(VideoEncoder, self).__init__()
 
-		self.T 		= T
-		self.d 		= d
-		self.d0 	= input_video_dim
-		self.device = device
-		# CHECK - IS THIS CORRECT?
-		# PAPER FORM WHICH CHARADES WAS PICKED USES LINEAR LAYER - self.vid_emb_fn
-		# PAPER FROM WHICH OTHER TWO DATASETS WAS PICKED USED 1D CONVOLUTION LAYER - self.vis_conv
-		# CHECK - DO NEED A NON LINEAR ACTIVATION HERE?
-		# Video Embedding to convert input video feature space to 512
-		self.ve 	= nn.Linear(self.d0, self.d)
-		# Positional Encoding
-		self.pe 	= nn.Embedding(self.T, self.d)
+                self.T          = T
+                self.d          = d
+                self.d0         = input_video_dim
+                self.device = device
+                # CHECK - IS THIS CORRECT?
+                # PAPER FORM WHICH CHARADES WAS PICKED USES LINEAR LAYER - self.vid_emb_fn
+                # PAPER FROM WHICH OTHER TWO DATASETS WAS PICKED USED 1D CONVOLUTION LAYER - self.vis_conv
+                # CHECK - DO NEED A NON LINEAR ACTIVATION HERE?
+                # Video Embedding to convert input video feature space to 512
+                self.ve         = nn.Linear(self.d0, self.d)
+                # Positional Encoding
+                self.pe         = nn.Embedding(self.T, self.d)
 
-	def forward(self, video_features, video_mask):
-		# video_features: B x T x input_video_dim, video_mask: B x T x 1 -> x: B x T x d
-		x = self.ve(video_features) * video_mask.float()
+        def forward(self, video_features, video_mask):
+                # video_features: B x T x input_video_dim, video_mask: B x T x 1 -> x: B x T x d
+                x = self.ve(video_features) * video_mask.float()
 
-		# CHECK - WILL THIS BE A TRAINABLE PARAMETER?
-		# FIX - THIS IS WRONG I GUESS, WE NEED TO USE ONE HOT ENCODING LIKE THE PAPER USED.
-		p = torch.arange(0, video_mask.shape[1]).unsqueeze(0).long().to(self.device)
-		p = self.pe(p) * video_mask.float()
+                # CHECK - WILL THIS BE A TRAINABLE PARAMETER?
+                # FIX - THIS IS WRONG I GUESS, WE NEED TO USE ONE HOT ENCODING LIKE THE PAPER USED.
+                p = torch.arange(0, video_mask.shape[1]).unsqueeze(0).long().to(self.device)
+                p = self.pe(p) * video_mask.float()
 
-		x += p
+                x += p
 
-		return x
+                return x
 
 class QueryEncoder(nn.Module):
 
-	def __init__(self, max_query_length = 13, lstm_hidden_size = 256):
-		super(QueryEncoder, self).__init__()
+        def __init__(self, max_query_length = 13, lstm_hidden_size = 256):
+                super(QueryEncoder, self).__init__()
 
-		self.max_query_length = max_query_length
-		self.lstm_hidden_size = lstm_hidden_size
+                self.max_query_length = max_query_length
+                self.lstm_hidden_size = lstm_hidden_size
 
-		self.lstm = nn.LSTM(input_size = 300, hidden_size = lstm_hidden_size, num_layers = 2, bidirectional = True, batch_first = True)
+                self.lstm = nn.LSTM(input_size = 300, hidden_size = lstm_hidden_size, num_layers = 2, bidirectional = True, batch_first = True)
 
-	def forward(self, query_features, query_mask):
-		# query_features: B x max_query_length x 300, query_mask: B x max_query_length x 1
-		length = query_mask.sum(1).squeeze()
+        def forward(self, query_features, query_mask):
+                # query_features: B x max_query_length x 300, query_mask: B x max_query_length x 1
+                length = query_mask.sum(1).squeeze()
 
-		pack_wemb = nn.utils.rnn.pack_padded_sequence(query_features, length.to('cpu'), batch_first = True, enforce_sorted = False)
-		x, _ = self.lstm(pack_wemb)
-		fw, max_ = nn.utils.rnn.pad_packed_sequence(x, batch_first = True, total_length = self.max_query_length)
-		fw = fw.contiguous() # [B, max_query_length, 2 * lstm_hidden_size]
+                pack_wemb = nn.utils.rnn.pack_padded_sequence(query_features, length.to('cpu'), batch_first = True, enforce_sorted = False)
+                x, _ = self.lstm(pack_wemb)
+                fw, max_ = nn.utils.rnn.pad_packed_sequence(x, batch_first = True, total_length = self.max_query_length)
+                fw = fw.contiguous() # [B, max_query_length, 2 * lstm_hidden_size]
 
-		B, L, H = fw.size()
-		idx = (length-1).long() # 0-indexed
-		idx = idx.view(B, 1, 1).expand(B, 1, H//2)
-		fLSTM = fw[:,:,:H//2].gather(1, idx).view(B, H//2)
-		bLSTM = fw[:,0,H//2:].view(B,H//2)
-		fs = torch.cat([fLSTM, bLSTM], dim=1) # fs : [hNq->, <-h1] i.e., [B, 2 * lstm_hidden_size]
+                B, L, H = fw.size()
+                idx = (length-1).long() # 0-indexed
+                idx = idx.view(B, 1, 1).expand(B, 1, H//2)
+                fLSTM = fw[:,:,:H//2].gather(1, idx).view(B, H//2)
+                bLSTM = fw[:,0,H//2:].view(B,H//2)
+                fs = torch.cat([fLSTM, bLSTM], dim=1) # fs : [hNq->, <-h1] i.e., [B, 2 * lstm_hidden_size]
 
-		return fs, fw
+                return fs, fw
 
 class Backbone(nn.Module):
 
-	def __init__(self, T = 64, d = 512, input_video_dim = 1024, max_query_length = 13, lstm_hidden_size = 256, device = 'cpu'):
-		super(Backbone, self).__init__()
+        def __init__(self, T = 64, d = 512, input_video_dim = 1024, max_query_length = 13, lstm_hidden_size = 256, device = 'cpu'):
+                super(Backbone, self).__init__()
 
-		self.videoencoder = VideoEncoder(T, d, input_video_dim, device)
-		self.queryencoder = QueryEncoder(max_query_length, lstm_hidden_size)
+                self.videoencoder = VideoEncoder(T, d, input_video_dim, device)
+                self.queryencoder = QueryEncoder(max_query_length, lstm_hidden_size)
 
-	def forward(self, video_features, video_mask, query_features, query_mask):
-		# fv: B x T x d
-		fv 		= self.videoencoder(video_features, video_mask)
-		# fs: B x d, fw: B x max_query_length x d
-		fs, fw 	= self.queryencoder(query_features, query_mask)
+        def forward(self, video_features, video_mask, query_features, query_mask):
+                # fv: B x T x d
+                fv              = self.videoencoder(video_features, video_mask)
+                # fs: B x d, fw: B x max_query_length x d
+                fs, fw  = self.queryencoder(query_features, query_mask)
 
-		# f: B x T x d
-		f = fv * fs.unsqueeze(1) # Hadamard product of video and sentence features
+                # f: B x T x d
+                f = fv * fs.unsqueeze(1) # Hadamard product of video and sentence features
 
-		return f, fs, fw
+                return f, fs, fw
 
 # CHECK - SHOULD WE ACCOUNT FOR VIDEO MASK IN THE Wc? MOMENTS [0,15] WILL BE INVALID IF THE VIDEO IS NOT SPANNING THE WHOLE 16 OF L
 # CHECK - THIS MIGHT CAUSE ISSUES WITH FM, FB, FC?
 # CHECK - WHAT ABOUT THE CASE - 31 FRAMES, AND HTHE LAST VALID MOMENT IS INCLUDING A 0 FOR THE 32ND FRAME?
 def compute_content_matrix(T, L, C):
-	Wc = torch.zeros((L, L, C, T))
-	for i in range(L):
-		for j in range(i, L):
-			window_size = (j-i)+1
-			window_start, num_frames = i*(T//L), window_size*(T//L)
-			clip_size = max(1, num_frames // C)
-			for c in range(min(C, num_frames)):
-				clip_start = window_start + c*clip_size
-				Wc[i, j, c, clip_start : clip_start + clip_size] = 1/clip_size
-	return Wc
+        Wc = torch.zeros((L, L, C, T))
+        for i in range(L):
+                for j in range(i, L):
+                        window_size = (j-i)+1
+                        window_start, num_frames = i*(T//L), window_size*(T//L)
+                        clip_size = max(1, num_frames // C)
+                        for c in range(min(C, num_frames)):
+                                clip_start = window_start + c*clip_size
+                                Wc[i, j, c, clip_start : clip_start + clip_size] = 1/clip_size
+        return Wc
 
 class ProposalGeneration(nn.Module):
-	
-	# CHECK - How to deal with the case where L does not divide T?
-	# CHECK - Wc is a upper triangular matrix. Should we make it symmetric as we are using softmax?
-	def __init__(self, T = 64, L = 16, C = 4, device = 'cpu'):
-		super(ProposalGeneration, self).__init__()
+        
+        # CHECK - How to deal with the case where L does not divide T?
+        # CHECK - Wc is a upper triangular matrix. Should we make it symmetric as we are using softmax?
+        def __init__(self, T = 64, L = 16, C = 4, device = 'cpu'):
+                super(ProposalGeneration, self).__init__()
 
-		self.T 			= T
-		self.L 			= L
-		self.C 			= C
-		self.device		= device
-		# CHECK - WILL Wc BECOME A TRAINABLE PARAMETER?
-		self.Wc 		= compute_content_matrix(T, L, C).to(self.device)
-		self.avg_pool 	= nn.AvgPool1d(T//L, stride=T//L)
+                self.T                  = T
+                self.L                  = L
+                self.C                  = C
+                self.device             = device
+                # CHECK - WILL Wc BECOME A TRAINABLE PARAMETER?
+                self.Wc                 = compute_content_matrix(T, L, C).to(self.device)
+                self.avg_pool   = nn.AvgPool1d(T//L, stride=T//L)
 
-	def forward(self, f, moment_mask):
-		# Wc: (L, L, C, T), f: (B, T, D), moment_mask: (B, L, L) -> fc: (B, L, L, C, D)
-		fc = torch.einsum('lmit, btj -> blmij', self.Wc, f) * moment_mask.unsqueeze(-1).unsqueeze(-1)
-		# fc: (B, L, L, C, D) -> fm: (B, L, L, D)
-		fm = torch.mean(fc, dim=3)
-		# f: (B, T, D) -> fb: (B, D, T)
-		fb = torch.permute(f, (0, 2, 1))
-		# fb: (B, D, T) -> fb: (B, D, L)
-		fb = self.avg_pool(fb)
-		# fb: (B, D, L) -> fb: (B, L, D)
-		fb = torch.permute(fb, (0, 2, 1))
-		return fc, fm, fb
+        def forward(self, f, moment_mask):
+                # Wc: (L, L, C, T), f: (B, T, D), moment_mask: (B, L, L) -> fc: (B, L, L, C, D)
+                fc = torch.einsum('lmit, btj -> blmij', self.Wc, f) * moment_mask.unsqueeze(-1).unsqueeze(-1)
+                # fc: (B, L, L, C, D) -> fm: (B, L, L, D)
+                fm = torch.mean(fc, dim=3)
+                # f: (B, T, D) -> fb: (B, D, T)
+                fb = torch.permute(f, (0, 2, 1))
+                # fb: (B, D, T) -> fb: (B, D, L)
+                fb = self.avg_pool(fb)
+                # fb: (B, D, L) -> fb: (B, L, D)
+                fb = torch.permute(fb, (0, 2, 1))
+                return fc, fm, fb
 
-class Attention(nn.Module):
+class Attention1(nn.Module):
 
     def __init__(self, D):
         super(Attention, self).__init__()
@@ -140,12 +140,12 @@ class Attention(nn.Module):
         # attn_weights: (B, Lq, Lk)
         attn_weights = torch.matmul(query, torch.transpose(key, 2, 1))/math.sqrt(self.D)
         if mask is not None:
-	       	# mask: (B, Lk, 1) -> (B, 1, Lk)
-	       	mask = mask.squeeze().float().unsqueeze(1)
-	       	# attn_weights: (B, Lq, Lk)
-	       	attn_weights = attn_weights * mask
-	       	# Make sure query words that are padded don't impact the attention
-	       	attn_weights = attn_weights.masked_fill(mask == 0, -1e9)
+                # mask: (B, Lk, 1) -> (B, 1, Lk)
+                mask = mask.squeeze().float().unsqueeze(1)
+                # attn_weights: (B, Lq, Lk)
+                attn_weights = attn_weights * mask
+                # Make sure query words that are padded don't impact the attention
+                attn_weights = attn_weights.masked_fill(mask == 0, -1e9)
         # attn_weights: (B, Lq, Lk)
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
         # attn_weights: (B, Lq, Lk), value: (B, Lk=Lv, D) -> attn_out: (B, Lq, D)
@@ -153,13 +153,47 @@ class Attention(nn.Module):
         self.attn_weights = attn_weights
         return attn_out
 
+class Attention(nn.Module):
+
+    def __init__(self, D, h):
+        super(Attention, self).__init__()
+
+        self.D, self.h, self.attn_weights = D, h, None
+        self.W_q = nn.Linear(D, D)
+        self.W_k = nn.Linear(D, D)
+
+    def forward(self, query, key, value, mask = None):
+        B, Lq, Lk, D = query.shape[0], query.shape[1], key.shape[1], query.shape[2]
+        # query: (B, Lq, D) -> (B, Lq, D), key: (B, Lk, D) -> (B, Lk, D)
+        query, key, dk = self.W_q(query), self.W_k(key), self.D // self.h
+        query = query.reshape(B, Lq, self.h, dk).permute(0, 2, 1, 3)
+        value = value.reshape(B, Lk, self.h, dk).permute(0, 2, 1, 3)
+        key = key.reshape(B, Lk, self.h, dk).permute(0, 2, 1, 3)
+        # attn_weights: (B, Lq, Lk)
+        attn_weights = torch.matmul(query, torch.transpose(key, -2, -1))/math.sqrt(dk)
+        if mask is not None:
+                # mask: (B, Lk, 1) -> (B, 1, Lk)
+                mask = mask.squeeze().float().unsqueeze(1).unsqueeze(1)
+                # attn_weights: (B, Lq, Lk)
+                attn_weights = attn_weights * mask
+                # Make sure query words that are padded don't impact the attention
+                attn_weights = attn_weights.masked_fill(mask == 0, -1e9)
+        # attn_weights: (B, Lq, Lk)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        # attn_weights: (B, Lq, Lk), value: (B, Lk=Lv, D) -> attn_out: (B, Lq, D))
+        attn_out = torch.matmul(attn_weights, value)
+        attn_out = attn_out.permute(0, 2, 1, 3)
+        attn_out = attn_out.reshape(B, Lq, D)
+        self.attn_weights = attn_weights
+        return attn_out
+
 class BoundaryUnit(nn.Module):
 
-    def __init__(self, D):
+    def __init__(self, D, h):
         super(BoundaryUnit, self).__init__()
 
         self.D = D
-        self.attn_layer = Attention(D)
+        self.attn_layer = Attention(D, h)
     
     def forward(self, f_b, f_w, f_s, f_m, query_mask, length_mask):
         # length_mask: (B, L) -> f_b_mask: (B, L, 1)
@@ -175,7 +209,7 @@ class BoundaryUnit(nn.Module):
 
         # length_mask: (B, L) -> mask: (B, 1, L)
         mask = length_mask.float().unsqueeze(1)
-		# A_b: (B, L, L), mask: (B, 1, L) -> A_b: (B, L, L)
+                # A_b: (B, L, L), mask: (B, 1, L) -> A_b: (B, L, L)
         A_b = A_b * mask
         # Make sure moments that are padded don't impact the attention
         A_b = A_b.masked_fill(mask == 0, -1e9)
@@ -210,13 +244,13 @@ class ContentAttention(nn.Module):
         # query: (B, L, L, C, D), key: (B, 1, 1, Nq, D) -> attn_weights: (B, L, L, C, Nq)
         attn_weights = torch.matmul(query, torch.transpose(key, 3, 4))/math.sqrt(self.D)
         if mask is not None:
-	       	# mask: (B, Nq, 1) -> (B, 1, 1, 1, Nq)
-	       	mask = mask.squeeze().float().unsqueeze(1).unsqueeze(2).unsqueeze(3)
-	       	# attn_weights: (B, L, L, C, Nq)
-	       	attn_weights = attn_weights * mask
-	       	# Make sure query words that are padded don't impact the attention
-	       	attn_weights = attn_weights.masked_fill(mask == 0, -1e9)
-	    # attn_weights: (B, L, L, C, Nq)
+                # mask: (B, Nq, 1) -> (B, 1, 1, 1, Nq)
+                mask = mask.squeeze().float().unsqueeze(1).unsqueeze(2).unsqueeze(3)
+                # attn_weights: (B, L, L, C, Nq)
+                attn_weights = attn_weights * mask
+                # Make sure query words that are padded don't impact the attention
+                attn_weights = attn_weights.masked_fill(mask == 0, -1e9)
+            # attn_weights: (B, L, L, C, Nq)
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
         # value: (B, Nq, D) -> (B, 1, 1, Nq, D)
         value = value.unsqueeze(1).unsqueeze(2)
@@ -233,11 +267,11 @@ class ContentUnit(nn.Module):
         self.D = D
         self.dl = dl
 
-        self.linear_c_hat 	= nn.Linear(D, dl)
-        self.linear_w_hat 	= nn.Linear(D, dl)
-        self.linear_s_hat 	= nn.Linear(D, dl)
-        self.linear_c 		= nn.Linear(dl, D)
-        self.attn_layer 	= ContentAttention(dl)
+        self.linear_c_hat       = nn.Linear(D, dl)
+        self.linear_w_hat       = nn.Linear(D, dl)
+        self.linear_s_hat       = nn.Linear(D, dl)
+        self.linear_c           = nn.Linear(dl, D)
+        self.attn_layer         = ContentAttention(dl)
     
     def forward(self, f_c, f_w, f_s, f_m, query_mask, moment_mask):
         # moment_mask: (B, L, L) -> f_c_mask: (B, L, L, 1, 1)
@@ -277,101 +311,236 @@ class ContentUnit(nn.Module):
 
 class MomentUnit(nn.Module):
 
-	def __init__(self, D):
-		super(MomentUnit, self).__init__()
+        def __init__(self, D):
+                super(MomentUnit, self).__init__()
 
-		self.D = D
-		# CHECK - REVIEW THESE CONVOLUTIONAL LAYERS LATER
-		self.conv_layer_fb = nn.Conv2d(D, D, 1)
-		self.conv_layer_fc = nn.Conv2d(D, D, 1)
+                self.D = D
+                # CHECK - REVIEW THESE CONVOLUTIONAL LAYERS LATER
+                self.conv_layer_fb = nn.Conv2d(D, D, 1)
+                self.conv_layer_fc = nn.Conv2d(D, D, 1)
 
-	def forward(self, f_c, f_m, f_b, moment_mask):
-		# moment_mask: (B, L, L) -> f_m_mask: (B, L, L, 1)
-		f_m_mask = moment_mask.unsqueeze(-1)
+        def forward(self, f_c, f_m, f_b, moment_mask):
+                # moment_mask: (B, L, L) -> f_m_mask: (B, L, L, 1)
+                f_m_mask = moment_mask.unsqueeze(-1)
 
-		# f_b: (B, L, D) -> f_b_s: (B, L, 1, D)
-		f_b_s = f_b.unsqueeze(2)
-		# f_b: (B, L, D) -> f_b_e: (B, 1, L, D)
-		f_b_e = f_b.unsqueeze(1)
-		# f_c: (B, L, L, C, D) -> f_c_mean: (B, L, L, D)
-		f_c_mean = torch.mean(f_c, 3)
-		# below operations don't change dimensions of the inputs
-		conv_fb = self.conv_layer_fb((f_b_s * f_b_e).permute(0, 3, 1 ,2)).permute(0, 2, 3, 1)
-		conv_fb = conv_fb * f_m_mask
-		conv_fc = self.conv_layer_fc(f_c_mean.permute(0, 3, 1 ,2)).permute(0, 2, 3, 1)
-		conv_fc = conv_fc * f_m_mask
-		return conv_fb + conv_fc + f_m
+                # f_b: (B, L, D) -> f_b_s: (B, L, 1, D)
+                f_b_s = f_b.unsqueeze(2)
+                # f_b: (B, L, D) -> f_b_e: (B, 1, L, D)
+                f_b_e = f_b.unsqueeze(1)
+                # f_c: (B, L, L, C, D) -> f_c_mean: (B, L, L, D)
+                f_c_mean = torch.mean(f_c, 3)
+                # below operations don't change dimensions of the inputs
+                conv_fb = self.conv_layer_fb((f_b_s * f_b_e).permute(0, 3, 1 ,2)).permute(0, 2, 3, 1)
+                conv_fb = conv_fb * f_m_mask
+                conv_fc = self.conv_layer_fc(f_c_mean.permute(0, 3, 1 ,2)).permute(0, 2, 3, 1)
+                conv_fc = conv_fc * f_m_mask
+                return conv_fb + conv_fc + f_m
+
+class CGAEncoder1(nn.Module):
+    def __init__(self, D):
+        super(CGAEncoder, self).__init__()
+        self.D, self.attn_weights = D, None
+        self.W_q = nn.Linear(D, D)
+        self.W_k = nn.Linear(D, D)
+        self.W_v = nn.Linear(D, D)
+
+        self.W_qg = nn.Linear(D, D)
+        self.W_vg = nn.Linear(D, D)
+        self.b_g = nn.Parameter(torch.zeros(D))
+        self.b_i = nn.Parameter(torch.zeros(D))
+        self.sigmoid = nn.Sigmoid()
+
+    
+    # query: (B, Nq, D), query_mask: (B, Nq), key: (B, L, L, D), value: (B, L, L, D), kv_mask: (B, L, L)
+    def forward(self, query, query_mask, key, value, kv_mask):
+        # key, value: (B, L, L, D) -> key, value: (B, L*L, D)
+        B, L, D =  key.shape[0], key.shape[1], key.shape[3]
+        key, value = torch.reshape(key, (B, L*L, D)), torch.reshape(value, (B, L*L, D))
+        query, key, value  = self.W_q(query), self.W_k(key), self.W_v(value) 
+        if query.dim() == 2:
+            query = query.unsqueeze(1)
+
+        # query: (B, Nq, D), key, value: (B, L*L, D) -> attn_weights: (B, Nq, L*L)
+        attn_weights = torch.matmul(query, torch.transpose(key, 2, 1))/math.sqrt(D)
+        # kv_mask: (B, L, L) -> kv_mask: (B, 1, L*L)
+        kv_mask = kv_mask.reshape(B, L*L).float().unsqueeze(1)
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = attn_weights * kv_mask
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = attn_weights.masked_fill(kv_mask == 0, -1e9)
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        self.attn_weights = attn_weights
+        
+        # attn_weights: (B, Nq, L*L), value: (B, L*L, D) -> attn_out: (B, Nq, D)
+        attn_out = torch.matmul(attn_weights, value)
+        if query_mask is not None:
+                attn_out = attn_out * query_mask.float()
+
+        #temp_out = self.W_qg(query) + self.W_vg(attn_out)
+        #attn_out = self.sigmoid(temp_out + self.b_g) * (temp_out + self.b_i)
+
+        if query_mask is not None:
+                attn_out = attn_out * query_mask.float()
+        else:
+                attn_out = attn_out.squeeze(1)
+
+        return attn_out
+
+class CGAEncoder(nn.Module):
+    def __init__(self, D, h):
+        super(CGAEncoder, self).__init__()
+        self.D, self.h, self.attn_weights = D, h, None
+        self.W_q = nn.Linear(D, D)
+        self.W_k = nn.Linear(D, D)
+        self.W_v = nn.Linear(D, D)
+
+        self.W_qg = nn.Linear(D, D)
+        self.W_vg = nn.Linear(D, D)
+        self.b_g = nn.Parameter(torch.zeros(D))
+        self.b_i = nn.Parameter(torch.zeros(D))
+        self.sigmoid = nn.Sigmoid()
+
+    # query: (B, Nq, D), query_mask: (B, Nq), key: (B, L, L, D), value: (B, L, L, D), kv_mask: (B, L, L)
+    def forward(self, query, query_mask, key, value, kv_mask):
+        # key, value: (B, L, L, D) -> key, value: (B, L*L, D)
+        B, L, D =  key.shape[0], key.shape[1], key.shape[3]
+        key, value = torch.reshape(key, (B, L*L, D)), torch.reshape(value, (B, L*L, D))
+        query, key, value  = self.W_q(query), self.W_k(key), self.W_v(value)
+        if query.dim() == 2:
+            query = query.unsqueeze(1)
+        query_copy, Nq = query, query.shape[1]
+        
+        # query: (B, Nq, D), key, value: (B, L*L, D) -> attn_weights: (B, Nq, L*L)
+        query = query.reshape(B, Nq, self.h, D//self.h).permute(0, 2, 1, 3)
+        value = value.reshape(B, L*L, self.h, D//self.h).permute(0, 2, 1, 3)
+        key = key.reshape(B, L*L, self.h, D//self.h).permute(0, 2, 1, 3)
+        attn_weights = torch.matmul(query, torch.transpose(key, -2, -1))/math.sqrt(D//self.h)
+        # kv_mask: (B, L, L) -> kv_mask: (B, 1, L*L)
+        kv_mask = kv_mask.reshape(B, L*L).float().unsqueeze(1).unsqueeze(1)
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = attn_weights * kv_mask
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = attn_weights.masked_fill(kv_mask == 0, -1e9)
+        # attn_weights: (B, Nq, L*L)
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        self.attn_weights = attn_weights
+        
+        # attn_weights: (B, Nq, L*L), value: (B, L*L, D) -> attn_out: (B, Nq, D)
+        attn_out = torch.matmul(attn_weights, value)
+        attn_out = attn_out.permute(0, 2, 1, 3)
+        attn_out = attn_out.reshape(B, Nq, D)
+        if query_mask is not None:
+                attn_out = attn_out * query_mask.float()
+        
+        #temp_out = self.W_qg(query_copy) + self.W_vg(attn_out)
+        #attn_out = self.sigmoid(temp_out + self.b_g) * (temp_out + self.b_i)
+
+        if query_mask is not None:
+                attn_out = attn_out * query_mask.float()
+        else:
+                attn_out = attn_out.squeeze(1)
+
+        return attn_out
 
 class SMI(nn.Module):
 
-	def __init__(self, D, dl):
-		super(SMI, self).__init__()
+        def __init__(self, D, dl, h, fian):
+                super(SMI, self).__init__()
 
-		self.D = D
-		self.dl = dl
-		self.content_unit = ContentUnit(D, dl)
-		self.boundary_unit = BoundaryUnit(D)
-		self.moment_unit = MomentUnit(D)
+                self.D = D
+                self.dl = dl
+                self.fian = fian
 
-	def forward(self, f_c, f_m, f_b, f_w, f_s, query_mask, length_mask, moment_mask):
-		# first layer
-		cu1 = self.content_unit(f_c, f_w, f_s, f_m, query_mask, moment_mask)
-		bu1 = self.boundary_unit(f_b, f_w, f_s, f_m, query_mask, length_mask)
-		mu1 = self.moment_unit(cu1, f_m, bu1, moment_mask)
+                self.content_unit = ContentUnit(D, dl)
+                self.boundary_unit = BoundaryUnit(D, h)
+                self.moment_unit = MomentUnit(D)
+                self.cga_encoder = CGAEncoder(D, h)
 
-		return cu1, mu1, bu1
+                self.content_unit1 = ContentUnit(D, dl)
+                self.boundary_unit1 = BoundaryUnit(D, h)
+                self.moment_unit1 = MomentUnit(D)
+                self.cga_encoder1 = CGAEncoder(D, h)
+
+        def forward(self, fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask):
+                # Q(1) = Encoder(Q, V)
+                fw1 = self.cga_encoder(fw, query_mask, fm, fm, moment_mask)
+                fs1 = self.cga_encoder(fs, None, fm, fm, moment_mask)
+
+                # V(1) = Encoder(V, Q(1))
+                fc1 = self.content_unit(fc, fw1, fs1, fm, query_mask, moment_mask)
+                fb1 = self.boundary_unit(fb, fw1, fs1, fm, query_mask, length_mask)
+                fm1 = self.moment_unit(fc1, fm, fb1, moment_mask)
+
+                # V(2) = Encoder(V, Q)
+                fc2 = self.content_unit1(fc, fw, fs, fm, query_mask, moment_mask)
+                fb2 = self.boundary_unit1(fb, fw, fs, fm, query_mask, length_mask)
+                fm2 = self.moment_unit1(fc2, fm, fb2, moment_mask)
+                
+                # Q(2) = Encoder(Q, V(2))
+                fw2 = self.cga_encoder1(fw, query_mask, fm2, fm2, moment_mask)
+                fs2 = self.cga_encoder1(fs, None, fm2, fm2, moment_mask)
+
+                if self.fian==True:
+                    fc, fm, fb = torch.max(fc1, fc2), torch.max(fm1, fm2), torch.max(fb1, fb2)
+                    fw, fs = torch.max(fw1, fw2), torch.max(fs1, fs2)
+                    return fc, fm, fb, fw, fs
+                else:
+                    return fc2, fm2, fb2, fw1, fs1
 
 class Localization(nn.Module):
 
-	def __init__(self, D):
-		super(Localization,self).__init__()
+        def __init__(self, D):
+                super(Localization,self).__init__()
 
-		self.conv_layer_pm = nn.Conv2d(D, 1, 1)
-		self.conv_layer_ps = nn.Conv1d(D, 1, 1)
-		self.conv_layer_pe = nn.Conv1d(D, 1, 1)
-		self.conv_layer_pa = nn.Conv1d(D, 1, 1)
-		self.sigmoid = nn.Sigmoid()
+                self.conv_layer_pm = nn.Conv2d(D, 1, 1)
+                self.conv_layer_ps = nn.Conv1d(D, 1, 1)
+                self.conv_layer_pe = nn.Conv1d(D, 1, 1)
+                self.conv_layer_pa = nn.Conv1d(D, 1, 1)
+                self.sigmoid = nn.Sigmoid()
 
-	def forward(self, f_m, f_b, length_mask, moment_mask):
-		# f_m: (B, L, L, D), moment_mask: (B, L, L) -> p_m: (B, L, L)
-		p_m = self.sigmoid(self.conv_layer_pm(f_m.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)).squeeze(3) * moment_mask
-		# f_b: (B, L, D), length_mask: (B, L) -> p_s: (B, L)
-		p_s = self.sigmoid(self.conv_layer_ps(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
-		# f_b: (B, L, D), length_mask: (B, L) -> p_e: (B, L)
-		p_e = self.sigmoid(self.conv_layer_pe(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
-		# f_b: (B, L, D), length_mask: (B, L) -> p_a: (B, L)
-		p_a = self.sigmoid(self.conv_layer_pa(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
-		return p_m, p_s, p_e, p_a
+        def forward(self, f_m, f_b, length_mask, moment_mask):
+                # f_m: (B, L, L, D), moment_mask: (B, L, L) -> p_m: (B, L, L)
+                p_m = self.sigmoid(self.conv_layer_pm(f_m.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)).squeeze(3) * moment_mask
+                # f_b: (B, L, D), length_mask: (B, L) -> p_s: (B, L)
+                p_s = self.sigmoid(self.conv_layer_ps(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
+                # f_b: (B, L, D), length_mask: (B, L) -> p_e: (B, L)
+                p_e = self.sigmoid(self.conv_layer_pe(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
+                # f_b: (B, L, D), length_mask: (B, L) -> p_a: (B, L)
+                p_a = self.sigmoid(self.conv_layer_pa(f_b.permute(0, 2, 1)).permute(0, 2, 1)).squeeze(2) * length_mask
+                return p_m, p_s, p_e, p_a
 
 class SMIN(nn.Module):
 
-	def __init__(self, T, L, C, D, dl, num_smi_layers, input_video_dim, max_query_length, lstm_hidden_size, device = 'cpu'):
-		super(SMIN, self).__init__()
+        def __init__(self, T, L, C, D, dl, h, fian, num_smi_layers, input_video_dim, max_query_length, lstm_hidden_size, device = 'cpu'):
+                super(SMIN, self).__init__()
 
-		self.T 					= T
-		self.L 					= L
-		self.C 					= C
-		self.D 					= D
-		self.dl 				= dl
-		self.num_smi_layers 	= num_smi_layers
-		self.input_video_dim	= input_video_dim
-		self.max_query_length 	= max_query_length
-		self.lstm_hidden_size	= lstm_hidden_size
-		self.device 			= device
+                self.T                                  = T
+                self.L                                  = L
+                self.C                                  = C
+                self.D                                  = D
+                self.dl                                 = dl
+                self.h                                  = h
+                self.fian                               = fian
+                self.num_smi_layers     = num_smi_layers
+                self.input_video_dim    = input_video_dim
+                self.max_query_length   = max_query_length
+                self.lstm_hidden_size   = lstm_hidden_size
+                self.device                     = device
 
-		self.backbone 			= Backbone(self.T, self.D, self.input_video_dim, self.max_query_length, self.lstm_hidden_size, self.device)
-		self.pgm 				= ProposalGeneration(self.T, self.L, self.C, self.device)
-		self.smis 				= nn.ModuleList([SMI(self.D, self.dl) for i in range(self.num_smi_layers)])
-		self.localization		= Localization(self.D)
+                self.backbone                   = Backbone(self.T, self.D, self.input_video_dim, self.max_query_length, self.lstm_hidden_size, self.device)
+                self.pgm                                = ProposalGeneration(self.T, self.L, self.C, self.device)
+                self.smis                               = nn.ModuleList([SMI(self.D, self.dl, self.h, self.fian) for i in range(self.num_smi_layers)])
+                self.localization               = Localization(self.D)
 
-	def forward(self, video_features, video_mask, query_features, query_mask, length_mask, moment_mask):
-		f, fs, fw 				= self.backbone(video_features, video_mask, query_features, query_mask)
+        def forward(self, video_features, video_mask, query_features, query_mask, length_mask, moment_mask):
+                f, fs, fw                               = self.backbone(video_features, video_mask, query_features, query_mask)
 
-		fc, fm, fb 				= self.pgm(f, moment_mask)
+                fc, fm, fb                              = self.pgm(f, moment_mask)
 
-		for i in range(self.num_smi_layers):
-			fc, fm, fb 			= self.smis[i](fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
+                for i in range(self.num_smi_layers):
+                        fc, fm, fb, fw, fs                      = self.smis[i](fc, fm, fb, fw, fs, query_mask, length_mask, moment_mask)
 
-		pm, ps, pe, pa 			= self.localization(fm, fb, length_mask, moment_mask)
+                pm, ps, pe, pa                  = self.localization(fm, fb, length_mask, moment_mask)
 
-		return pm, ps, pe, pa
+                return pm, ps, pe, pa
